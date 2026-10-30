@@ -11,7 +11,7 @@
 
 // Trocar esta versão é o que faz o app atualizar no celular: o activate abaixo
 // apaga todo cache com chave diferente. Incremente a cada mudança de arquivo.
-const VERSAO = "minhas-compras-v2";
+const VERSAO = "minhas-compras-v3";
 
 const CASCO = [
   "./",
@@ -24,12 +24,15 @@ const CASCO = [
   "./js/config.js",
   "./js/conexao.js",
   "./js/tela-acesa.js",
+  "./js/precos.js",
+  "./js/escolhas.js",
   "./js/telas/login.js",
   "./js/telas/acesso.js",
   "./js/telas/lista.js",
   "./js/telas/orcamento.js",
   "./js/telas/historico.js",
   "./js/telas/ajustes.js",
+  "./js/telas/produto.js",
   "./assets/fonts/figtree-latin.woff2",
   "./assets/fonts/figtree-latin-ext.woff2",
   "./assets/icone.svg",

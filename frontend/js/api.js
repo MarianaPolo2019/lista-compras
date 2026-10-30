@@ -119,7 +119,7 @@ export const consultas = {
     const linhas = [];
     for (let de = 0; ; de += PAGINA) {
       const parte = conferir(await sb.from("compra_itens")
-        .select("produto_id, marca, preco_unitario, compras!inner(data, created_at)")
+        .select("produto_id, compra_id, marca, quantidade, preco_unitario, compras!inner(data, created_at)")
         .order("id")
         .range(de, de + PAGINA - 1)) ?? [];
       linhas.push(...parte);
@@ -132,9 +132,32 @@ export const consultas = {
       .select("limite_gastos, manter_tela_acesa").eq("id", 1).maybeSingle());
   },
 
+  /** Observações ainda não resolvidas, a mais recente primeiro. */
   async observacoesAbertas() {
     return conferir(await sb.from("observacoes")
-      .select("id, texto, produto_id, created_at").eq("resolvida", false).order("created_at")) ?? [];
+      .select("id, texto, produto_id, created_at").eq("resolvida", false)
+      .order("created_at", { ascending: false })) ?? [];
+  },
+
+  /** Uma linha de lista_itens, lida na hora (para somar 1 sem usar valor velho). */
+  async itemDaLista(produtoId) {
+    return conferir(await sb.from("lista_itens").select(COLUNAS_ITEM).eq("produto_id", produtoId).maybeSingle());
+  },
+
+  /** Uma compra com os itens e o nome/corredor de cada produto (ativos ou não). */
+  async compra(id) {
+    return conferir(await sb.from("compras")
+      .select("id, data, mercado, origem, total, created_at, compra_itens(id, produto_id, marca, quantidade, preco_unitario, produtos(nome, categoria_id, ativo))")
+      .eq("id", id).maybeSingle());
+  },
+
+  /**
+   * mercado.comparar_mesmos_itens(): só produtos no carrinho com preço E
+   * comprados na compra anterior. Devolve uma linha (ou null).
+   */
+  async compararMesmosItens() {
+    const r = conferir(await sb.rpc("comparar_mesmos_itens", {}));
+    return Array.isArray(r) ? (r[0] ?? null) : r;
   },
 
   /** Compras finalizadas, da mais nova para a mais antiga, com a contagem de itens. */
@@ -143,6 +166,14 @@ export const consultas = {
       .select("id, data, mercado, origem, total, created_at, compra_itens(count)")
       .order("data", { ascending: false })
       .order("created_at", { ascending: false })) ?? [];
+  },
+
+  /** O mercado da compra mais recente, para pré-preencher o "Reiniciar lista". */
+  async ultimoMercado() {
+    const linha = conferir(await sb.from("compras").select("mercado")
+      .order("data", { ascending: false }).order("created_at", { ascending: false })
+      .limit(1).maybeSingle());
+    return linha?.mercado ?? "";
   },
 
   async contar(tabela, montar = (q) => q) {
@@ -182,6 +213,51 @@ export const acoes = {
     return conferir(await sb.from("produtos")
       .insert({ nome, categoria_id: categoriaId })
       .select("id, nome, categoria_id, ativo").single());
+  },
+
+  /** Renomeia, troca o corredor ou desativa um produto. Devolve a linha gravada. */
+  async atualizarProduto(id, campos) {
+    const linha = conferir(await sb.from("produtos").update(campos).eq("id", id)
+      .select("id, nome, categoria_id, ativo").maybeSingle());
+    if (!linha) throw new ErroApi("Não encontrei o produto para gravar.");
+    return linha;
+  },
+
+  /** Apaga a linha do produto em lista_itens (se não existir, não faz nada). */
+  async apagarItemDaLista(produtoId) {
+    conferir(await sb.from("lista_itens").delete().eq("produto_id", produtoId));
+  },
+
+  /** Grava o limite de gastos (null = sem limite) e devolve o valor confirmado. */
+  async limiteGastos(valor) {
+    const linha = conferir(await sb.from("configuracoes")
+      .update({ limite_gastos: valor }).eq("id", 1)
+      .select("limite_gastos").maybeSingle());
+    if (!linha) throw new ErroApi("Não encontrei as configurações para gravar.");
+    return linha.limite_gastos;
+  },
+
+  async criarObservacao(texto, autorId) {
+    return conferir(await sb.from("observacoes")
+      .insert({ texto, criada_por: autorId })
+      .select("id, texto, produto_id, created_at").single());
+  },
+
+  async resolverObservacao(id, produtoId) {
+    conferir(await sb.from("observacoes").update({ resolvida: true, produto_id: produtoId }).eq("id", id));
+  },
+
+  async apagarObservacao(id) {
+    conferir(await sb.from("observacoes").delete().eq("id", id));
+  },
+
+  /**
+   * mercado.finalizar_compra: salva o carrinho no Histórico e zera a lista.
+   * `data` vem do aparelho já no fuso de São Paulo (o padrão do banco é UTC
+   * e erraria o dia de uma compra feita à noite). Devolve o id da compra.
+   */
+  async finalizarCompra(data, mercado) {
+    return conferir(await sb.rpc("finalizar_compra", { p_data: data, p_mercado: mercado }));
   },
 
   /** Grava a preferência e devolve o valor que o banco confirmou. */

@@ -71,6 +71,7 @@
   --desceu-fundo:       #e4f4ea;
   --desceu:             #1f6b45;  /* também: saldo restante positivo, ✓ do carrinho */
   --barra-ok:           #1f8a55;  /* barra do orçamento dentro do limite */
+  --barra-atencao:      #d99a1c;  /* barra entre 80% e 100%: o âmbar do design (o mesmo do selo Offline) */
   --neutro-fundo:       #f4f1f2;
   --neutro:             #6f646a;
   --outra-marca-fundo:  #e9e4e7;
@@ -988,3 +989,288 @@ button { cursor: pointer; }
   animation: girar .8s linear infinite;
 }
 @keyframes girar { to { transform: rotate(360deg); } }
+
+/* ==========================================================================
+   Etapa 3 — Orçamento, Histórico, diálogos e folha do produto
+   ========================================================================== */
+
+/* Aviso de sucesso confirmado pelo banco: as cores do "▼" verde. */
+.aviso-flutuante--ok { background: var(--desceu-fundo); color: var(--desceu); }
+
+/* Lista: no carrinho a conta nunca é cortada; a marca ganha reticências. */
+.carrinho__sub { display: flex; min-width: 0; }
+.sub__marca { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sub__conta { flex: none; white-space: nowrap; }
+
+/* Link discreto da linha aberta para a folha do produto. */
+.link-historico {
+  display: inline-flex;
+  align-items: center;
+  min-height: var(--toque);
+  margin-top: 2px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--magenta);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+/* --------------------------------------------------------------------------
+   Diálogo central (7a, 7c)
+   -------------------------------------------------------------------------- */
+.dialogo { position: fixed; inset: 0; z-index: 35; }
+.dialogo__veu { position: absolute; inset: 0; background: var(--veu); }
+.dialogo__caixa {
+  position: absolute;
+  left: var(--margem);
+  right: var(--margem);
+  top: 50%;
+  transform: translateY(-50%);
+  max-width: calc(480px - 2 * var(--margem));
+  max-height: calc(100% - 40px);
+  overflow: auto;
+  margin: 0 auto;
+  background: #fff;
+  border-radius: var(--raio-dialogo);
+  padding: 22px 20px 18px;
+  box-shadow: var(--sombra-dialogo);
+}
+.dialogo__titulo { font-size: 20px; font-weight: 800; letter-spacing: -.3px; }
+.dialogo__texto { font-size: 14.5px; color: var(--texto-fraco); margin-top: 6px; line-height: 1.45; }
+.dialogo__linha { display: flex; align-items: flex-start; gap: 10px; margin-top: 12px; }
+.dialogo__selo {
+  flex: none;
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 3px 9px;
+  border-radius: var(--raio-pilula);
+}
+.dialogo__selo--desceu { background: var(--desceu-fundo); color: var(--desceu); }
+.dialogo__selo--subiu { background: var(--subiu-fundo); color: var(--subiu); }
+.dialogo__selo--neutro { background: var(--neutro-fundo); color: var(--neutro); }
+.dialogo__linha-texto { font-size: 14px; line-height: 1.4; }
+.dialogo__campo { margin-top: 16px; }
+.dialogo__botoes { margin-top: 20px; }
+.dialogo__botoes .botao + .botao { margin-top: 10px; }
+.botao--perigo { background: var(--subiu); border-color: var(--subiu); color: #fff; }
+
+/* --------------------------------------------------------------------------
+   Folhas (escolher corredor / produto; folha do produto 7d)
+   -------------------------------------------------------------------------- */
+.folha--alta .folha__painel {
+  top: calc(env(safe-area-inset-top, 0px) + 52px);
+  max-height: none;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0;
+}
+.folha--alta .folha__corpo { flex: 1; overflow: auto; padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px)); }
+.folha__opcao { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.folha__check { color: var(--magenta); font-weight: 800; }
+.folha__opcao--produto { font-weight: 600; }
+.folha__opcao-sub { font-size: 12.5px; font-weight: 500; color: var(--texto-fraco); }
+.folha__busca { margin-top: 10px; }
+
+.produto__topo { display: flex; align-items: flex-start; gap: 10px; }
+.produto__titulos { flex: 1; min-width: 0; }
+.produto__nome { font-size: 21px; font-weight: 800; line-height: 1.15; }
+.produto__categoria { font-size: 13px; color: var(--texto-fraco); margin-top: 4px; }
+.produto__fechar {
+  width: var(--toque);
+  height: var(--toque);
+  flex: none;
+  border: 0;
+  border-radius: 50%;
+  background: var(--fundo-cinza);
+  color: var(--texto);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.produto__editar { margin-top: 0; }
+.produto__editar-botoes { display: flex; gap: 10px; margin-top: 10px; }
+.produto__ultimo {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px 0;
+  border-top: 1px solid var(--divisoria);
+  border-bottom: 1px solid var(--divisoria);
+}
+.produto__ultimo-rotulo { font-size: 12.5px; color: var(--texto-fraco); }
+.produto__ultimo-valor { font-size: 26px; font-weight: 800; }
+.produto__ultimo-selo { text-align: right; }
+.produto__ultimo-selo .selo-preco { font-size: 13.5px; padding: 4px 10px; display: inline-block; }
+.produto__contra { font-size: 12px; color: var(--texto-fraco); margin-top: 4px; }
+.produto__secao { display: block; margin: 16px 0 4px; }
+.produto__vazio { margin: 24px 0 8px; font-size: 14.5px; color: var(--texto-fraco); }
+.grafico { display: block; }
+.grafico__meses { position: relative; height: 18px; font-size: 11.5px; color: var(--texto-fraco); }
+.grafico__meses span { position: absolute; top: 0; transform: translateX(-50%); }
+.produto__cartoes { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 14px; }
+.produto__cartao { border: 1px solid var(--divisoria); border-radius: var(--raio-pequeno); padding: 10px 12px; }
+.produto__cartao-rotulo { font-size: 12px; color: var(--texto-fraco); }
+.produto__cartao-valor { font-weight: 800; }
+.produto__cartao-marca { font-size: 11.5px; color: var(--texto-fraco); }
+.produto__compras { margin-top: 6px; }
+.produto__compra {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 46px;
+  border-bottom: 1px solid var(--divisoria);
+  font-size: 14.5px;
+}
+.produto__compra-marca { font-size: 12.5px; color: var(--texto-fraco); }
+.produto__compra-preco { font-weight: 700; }
+.produto__acoes { display: flex; gap: 10px; margin-top: 16px; }
+.produto__excluir {
+  display: block;
+  width: 100%;
+  min-height: var(--toque);
+  margin: 10px 0 26px;
+  border: 0;
+  background: transparent;
+  color: var(--subiu);
+  font-weight: 700;
+  font-size: 15px;
+}
+
+/* --------------------------------------------------------------------------
+   Orçamento
+   -------------------------------------------------------------------------- */
+.caixa-valor__entrada {
+  width: 70px;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  text-align: right;
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+}
+.caixa-valor__entrada::placeholder { color: var(--texto-vazio); }
+.caixa-valor:focus-within { border-color: var(--magenta); }
+.caixa-valor--invalido { border-color: var(--subiu); background: var(--subiu-fundo); }
+
+.cartao-info {
+  border: 1px solid var(--divisoria);
+  border-radius: var(--raio-botao);
+  padding: 14px;
+  margin-top: 10px;
+}
+.cartao-info__linha { display: flex; justify-content: space-between; gap: 10px; }
+.cartao-info__rotulo { font-size: 13px; color: var(--texto-fraco); }
+.cartao-info__valor { font-weight: 800; }
+.cartao-info__nota { font-size: 12.5px; color: var(--texto-fraco); margin-top: 2px; }
+.cartao-info__nota--aviso { color: var(--aviso-texto); font-weight: 700; margin-top: 6px; }
+.cartao-info__selo { margin-top: 8px; }
+.cartao-info__selo .selo-preco { font-size: 13.5px; padding: 4px 10px; display: inline-block; }
+.cartao-info__selo + .cartao-info__nota { margin-top: 8px; }
+
+.obs-nova { display: flex; gap: 8px; margin: 6px 0 4px; }
+.obs-nova__entrada { flex: 1; min-width: 0; }
+.obs-nova__botao { width: auto; height: var(--altura-campo); padding: 0 18px; flex: none; }
+.observacao__texto { flex: 1; min-width: 0; }
+.observacao__lista {
+  height: var(--toque);
+  padding: 0 14px;
+  border-radius: var(--raio-pequeno);
+  border: 1.5px solid var(--magenta);
+  background: #fff;
+  color: var(--magenta);
+  font-weight: 700;
+  font-size: 13px;
+  white-space: nowrap;
+  flex: none;
+}
+.observacao__apagar {
+  width: var(--toque);
+  height: var(--toque);
+  flex: none;
+  border: 0;
+  background: transparent;
+  color: var(--texto-fraco);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: -10px;
+}
+.reiniciar { margin-top: 18px; }
+
+/* --------------------------------------------------------------------------
+   Histórico e detalhe da compra
+   -------------------------------------------------------------------------- */
+button.compra {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--divisoria);
+  background: transparent;
+  text-align: left;
+}
+.compra__texto, .compra__lado { display: flex; flex-direction: column; }
+.compra__lado { align-items: flex-end; }
+.compra__selos { display: flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
+.compra__seta { font-size: 22px; color: var(--texto-apagado); }
+
+.cabecalho__voltar {
+  width: var(--toque);
+  height: var(--toque);
+  margin-left: -12px;
+  flex: none;
+  border: 0;
+  background: transparent;
+  font-size: 28px;
+  line-height: 1;
+  color: var(--texto);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cabecalho__meio { flex: 1; min-width: 0; }
+
+.secao--destaque { margin: 18px 0 2px; }
+.destaque {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 48px;
+  border-bottom: 1px solid var(--divisoria);
+}
+.destaque__nome, .det__nome {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  font-weight: 600;
+  font-size: 15px;
+  min-height: 32px;
+}
+.det {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 60px;
+  border-bottom: 1px solid var(--divisoria);
+}
+.det__texto { flex: 1; min-width: 0; }
+.det__sub { font-size: 12.5px; color: var(--texto-fraco); }
+.det__lado { text-align: right; }
+.det__valor { font-weight: 700; white-space: nowrap; }
+.det__sem-destaque { margin-top: 14px; }
+.selo-mini {
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 1px 7px;
+  border-radius: var(--raio-pilula);
+}
+.selo-mini--subiu { background: var(--subiu-fundo); color: var(--subiu); }
+.selo-mini--desceu { background: var(--desceu-fundo); color: var(--desceu); }
+.selo-mini--neutro { background: var(--neutro-fundo); color: var(--neutro); }

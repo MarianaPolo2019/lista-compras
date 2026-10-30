@@ -36,6 +36,9 @@
 import { consultas, acoes } from "../api.js";
 import { esc, moeda, numero, plural, normalizar, htmlAvatar, avisar, dataCurta } from "../ui.js";
 import { htmlSelo, aoMudarLista, aoReconectar } from "../conexao.js";
+import { montarPrecos } from "../precos.js";
+import { escolherCorredor, nomeDeProduto } from "../escolhas.js";
+import { abrirFolhaProduto } from "./produto.js";
 
 const CHAVE_FILTRO = "minhas-compras.filtro";
 const FILTROS = ["todos", "levar", "carrinho"];
@@ -127,23 +130,9 @@ function item(id) {
   return st.local.get(id) ?? VAZIO;
 }
 
+/** A regra de "última" e "mesma marca" é a de precos.js, igual em todas as telas. */
 function montarHistorico(linhas) {
-  // Mais nova primeiro: data da compra e, no mesmo dia, a criada por último.
-  const ordenadas = [...linhas].sort((a, b) =>
-    (b.compras.data).localeCompare(a.compras.data) ||
-    String(b.compras.created_at).localeCompare(String(a.compras.created_at)));
-  const ultima = new Map(), porMarca = new Map(), marcas = new Map();
-  for (const l of ordenadas) {
-    const reg = { data: l.compras.data, marca: l.marca, preco: Number(l.preco_unitario) };
-    if (!ultima.has(l.produto_id)) ultima.set(l.produto_id, reg);
-    if (!l.marca) continue;
-    const chave = `${l.produto_id}|${normalizar(l.marca)}`;
-    if (porMarca.has(chave)) continue;
-    porMarca.set(chave, reg);
-    if (!marcas.has(l.produto_id)) marcas.set(l.produto_id, []);
-    marcas.get(l.produto_id).push(reg);
-  }
-  st.hist = { ultima, porMarca, marcas };
+  st.hist = montarPrecos(linhas);
 }
 
 /** A marca que a linha mostra: a escolhida; senão, a da última compra. */
@@ -203,6 +192,16 @@ function lerFiltro() {
     return "levar";
   }
 }
+/**
+ * Para outras telas escolherem o filtro antes de abrir a Lista (o "Ir para o
+ * carrinho" do Reiniciar). Salva no aparelho como se a pessoa tivesse tocado.
+ */
+export function definirFiltroDaLista(f) {
+  if (!FILTROS.includes(f)) return;
+  st.filtro = f;
+  try { localStorage.setItem(CHAVE_FILTRO, f); } catch { /* sem armazenamento: vale só nesta sessão */ }
+}
+
 function trocarFiltro(f) {
   st.filtro = f;
   try { localStorage.setItem(CHAVE_FILTRO, f); } catch { /* sem armazenamento: vale só nesta sessão */ }
@@ -475,11 +474,14 @@ function htmlBlocoCarrinho() {
     ${itens.map(htmlLinhaCarrinho).join("")}`;
 }
 
-/** "Kicaldo · 2 un. · última R$ 8,09" (marca omitida se não houver). */
+/**
+ * "Kicaldo · 2 un. · última R$ 8,09". Marca omitida se não houver; com
+ * quantidade 0 o "0 un." some ("Kicaldo · última R$ 8,09").
+ */
 function subLinha(p) {
   const i = item(p.id);
   const ult = st.hist.ultima.get(p.id);
-  return [marcaDe(p.id), `${i.quantidade} un.`, ult ? `última ${moeda(ult.preco)}` : "primeira compra"]
+  return [marcaDe(p.id), i.quantidade > 0 ? `${i.quantidade} un.` : "", ult ? `última ${moeda(ult.preco)}` : "primeira compra"]
     .filter(Boolean).join(" · ");
 }
 
@@ -508,8 +510,6 @@ function htmlLinhaCarrinho(p) {
   const aberta = st.aberto === p.id;
   const temPreco = i.preco_unitario != null;
   const marca = marcaDe(p.id);
-  const sub = [marca, temPreco ? `${i.quantidade} × ${moeda(i.preco_unitario)}` : `${i.quantidade} un.`]
-    .filter(Boolean).join(" · ");
   const indice = (st.ctx.estado.membros ?? []).findIndex((m) => m.user_id === i.marcado_por);
   return `
     <div class="carrinho${aberta ? " linha--aberta" : ""}" data-produto="${esc(p.id)}">
@@ -519,13 +519,24 @@ function htmlLinhaCarrinho(p) {
         </button>
         <button type="button" class="carrinho__texto" data-acao="abrir" aria-expanded="${aberta}">
           <span class="carrinho__nome">${esc(p.nome)}</span>
-          <span class="carrinho__sub" data-sub-carrinho>${esc(sub)}</span>
+          <span class="carrinho__sub" data-sub-carrinho>${htmlSubCarrinho(p.id, marca)}</span>
         </button>
         <span class="carrinho__total${temPreco ? "" : " carrinho__total--sem"}" data-total-linha>${htmlTotalLinha(p.id)}</span>
         ${indice >= 0 ? htmlAvatar(st.ctx.estado.membros[indice], indice) : ""}
       </div>
       ${aberta ? htmlEditor(p) : ""}
     </div>`;
+}
+
+/**
+ * "Empório São João · 2 × R$ 27,50": a conta nunca é cortada; se faltar
+ * espaço, quem ganha reticências é a marca (duas partes, CSS em estilo.css).
+ */
+function htmlSubCarrinho(id, marca) {
+  const i = item(id);
+  const conta = i.preco_unitario != null ? `${i.quantidade} × ${moeda(i.preco_unitario)}` : `${i.quantidade} un.`;
+  return `${marca ? `<span class="sub__marca">${esc(marca)}</span><span class="sub__conta">&nbsp;· ${esc(conta)}</span>`
+    : `<span class="sub__conta">${esc(conta)}</span>`}`;
 }
 
 function htmlTotalLinha(id) {
@@ -564,6 +575,7 @@ function htmlEditor(p) {
       </div>
       <div class="editor__conta" data-conta>${htmlConta(p.id)}</div>
       <div class="editor__selo" data-selo-preco>${htmlSeloPreco(p.id)}</div>
+      <button type="button" class="link-historico" data-acao="historico">Histórico de preços ›</button>
     </div>`;
 }
 
@@ -656,6 +668,8 @@ function atualizarAoVivo(id) {
     if (conta) conta.textContent = htmlConta(id);
     const selo = linha.querySelector("[data-selo-preco]");
     if (selo) selo.innerHTML = htmlSeloPreco(id);
+    const sub = linha.querySelector("[data-sub-carrinho]");
+    if (sub) sub.innerHTML = htmlSubCarrinho(id, marcaDe(id));
     const total = linha.querySelector("[data-total-linha]");
     if (total) {
       total.textContent = htmlTotalLinha(id);
@@ -691,6 +705,8 @@ function ligarCorpo(tela) {
           st.ctx.tela.querySelector("[data-nova-marca]")?.focus();
         },
         "salvar-marca": () => salvarMarcaDigitada(id),
+        // Renomear, mudar corredor ou excluir lá dentro: a Lista relê tudo.
+        historico: () => abrirFolhaProduto(id, { aoMudar: () => st.ctx.redesenhar() }),
       })[alvo.dataset.acao]?.();
     });
 
@@ -920,55 +936,26 @@ function aplicarPendentes() {
 // ---------------------------------------------------------------------------
 // Produto novo pela busca (6b → escolha de corredor)
 // ---------------------------------------------------------------------------
-function abrirFolhaCategoria(texto) {
-  const limpo = texto.replace(/\s+/g, " ").trim();
-  if (!limpo) return;
-  const nome = limpo.charAt(0).toLocaleUpperCase("pt-BR") + limpo.slice(1);
-
-  const folha = document.createElement("div");
-  folha.className = "folha";
-  folha.setAttribute("role", "dialog");
-  folha.setAttribute("aria-modal", "true");
-  folha.setAttribute("aria-labelledby", "folha-titulo");
-  folha.innerHTML = `
-    <div class="folha__veu" data-fechar></div>
-    <div class="folha__painel">
-      <div class="folha__alca" aria-hidden="true"></div>
-      <div class="folha__titulo" id="folha-titulo">Adicionar “${esc(nome)}”</div>
-      <div class="folha__texto">Em que corredor ele fica?</div>
-      <div class="folha__lista">
-        ${st.categorias.map((c) => `
-          <button type="button" class="folha__opcao" data-categoria="${esc(c.id)}">${esc(c.nome)}</button>`).join("")}
-      </div>
-      <div class="alerta" data-erro hidden><div class="alerta__texto"></div></div>
-      <button type="button" class="botao botao--secundario folha__cancelar" data-fechar>Cancelar</button>
-    </div>`;
-  document.body.appendChild(folha);
-
-  const fechar = () => folha.remove();
-  const erro = folha.querySelector("[data-erro]");
-  folha.addEventListener("click", async (e) => {
-    if (e.target.closest("[data-fechar]")) return fechar();
-    const opcao = e.target.closest("[data-categoria]");
-    if (!opcao) return;
-    for (const b of folha.querySelectorAll("button")) b.disabled = true;
-    erro.hidden = true;
-    try {
-      const produto = await acoes.criarProduto(nome, opcao.dataset.categoria);
-      st.produtos.set(produto.id, produto);
-      fechar();
-      st.busca = "";
-      const entrada = st.ctx.topo.querySelector(".busca__entrada");
-      if (entrada) entrada.value = "";
-      st.ctx.topo.querySelector(".busca__limpar")?.setAttribute("hidden", "");
-      // Já entra com quantidade 1. Se esta gravação falhar, o produto existe
-      // (com 0) e o aviso da fila diz que a quantidade não foi salva.
-      mudar(produto.id, { quantidade: 1 });
-      desenharTudo();
-    } catch (falha) {
-      erro.querySelector(".alerta__texto").textContent = falha.message;
-      erro.hidden = false;
-      for (const b of folha.querySelectorAll("button")) b.disabled = false;
-    }
-  });
+async function abrirFolhaCategoria(texto) {
+  const nome = nomeDeProduto(texto);
+  if (!nome) return;
+  const categoria = await escolherCorredor(`Adicionar “${nome}”`, st.categorias);
+  if (!categoria) return;
+  let produto;
+  try {
+    produto = await acoes.criarProduto(nome, categoria);
+  } catch (falha) {
+    // Nome repetido (índice único sem acento/maiúscula) e outros: a mensagem real.
+    avisar(`Não foi possível cadastrar: ${falha.message}`);
+    return;
+  }
+  st.produtos.set(produto.id, produto);
+  st.busca = "";
+  const entrada = st.ctx.topo.querySelector(".busca__entrada");
+  if (entrada) entrada.value = "";
+  st.ctx.topo.querySelector(".busca__limpar")?.setAttribute("hidden", "");
+  // Já entra com quantidade 1. Se esta gravação falhar, o produto existe
+  // (com 0) e o aviso da fila diz que a quantidade não foi salva.
+  mudar(produto.id, { quantidade: 1 });
+  desenharTudo();
 }
