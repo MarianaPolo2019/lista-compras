@@ -2,9 +2,10 @@
 // sw.js — service worker: instalação na tela inicial + o app abrir sem internet
 //
 // O QUE FICA EM CACHE
-//   - o "casco" do app (HTML, CSS, JS, fonte, ícones): rede primeiro, cache se
-//     não houver rede. Com internet, abre sempre a versão publicada mais nova;
-//     sem internet, a última cópia;
+//   - o "casco" do app (HTML, CSS, JS, fonte, ícones): rede primeiro, com
+//     limite de 3 s; sem rede ou passou do limite (sinal fraco), a última
+//     cópia, e a resposta da rede, quando chegar, atualiza o cache em segundo
+//     plano. Com sinal bom, abre sempre a versão publicada mais nova;
 //   - o supabase-js do esm.sh, NA VERSÃO FIXA (SUPABASE_JS, igual à do
 //     import em js/api.js): cache primeiro. Uma URL com versão fixa nunca muda
 //     de conteúdo, então a cópia guardada é sempre a certa. Na instalação, o
@@ -24,7 +25,7 @@
 
 // Trocar esta versão é o que faz o app atualizar no celular: o activate abaixo
 // apaga todo cache com chave diferente. Incremente a cada mudança de arquivo.
-const VERSAO = "minhas-compras-v5";
+const VERSAO = "minhas-compras-v6";
 
 // A MESMA URL do import em js/api.js. Mudar uma = mudar a outra.
 const SUPABASE_JS = "https://esm.sh/@supabase/supabase-js@2.118.0";
@@ -60,8 +61,11 @@ const CASCO = [
   "./assets/icone.svg",
   "./assets/icons/icone-192.png",
   "./assets/icons/icone-512.png",
+  "./assets/icons/icone-mascavel-192.png",
+  "./assets/icons/icone-mascavel-512.png",
   "./assets/icons/apple-touch-icon.png",
   "./assets/icons/favicon-64.png",
+  "./assets/icons/favicon-32.png",
 ];
 
 /** Guarda o módulo do esm.sh e todos os arquivos que ele importa (até 40). */
@@ -126,21 +130,50 @@ self.addEventListener("fetch", (evento) => {
   // Só o que é deste site. O Supabase fica de fora.
   if (url.origin !== self.location.origin) return;
 
-  evento.respondWith(
-    fetch(req)
-      .then((resposta) => {
-        if (resposta.ok) {
-          const copia = resposta.clone();
-          caches.open(VERSAO).then((cache) => cache.put(req, copia)).catch(() => {});
-        }
-        return resposta;
-      })
-      .catch(async () => {
-        const emCache = await caches.match(req, { ignoreSearch: true });
-        if (emCache) return emCache;
-        // Navegação offline cai no index; o app abre com o que tem guardado.
-        if (req.mode === "navigate") return caches.match("./index.html");
-        return Response.error();
-      }),
-  );
+  // A cópia da rede sempre atualiza o cache, mesmo se chegar depois do limite
+  // (o service worker continua vivo até ela terminar).
+  const daRede = fetch(req).then(async (resposta) => {
+    if (resposta.ok) {
+      const cache = await caches.open(VERSAO);
+      await cache.put(req, resposta.clone()).catch(() => {});
+    }
+    return resposta;
+  });
+  evento.waitUntil(daRede.catch(() => {}));
+  evento.respondWith(arquivoDoApp(req, daRede));
 });
+
+/**
+ * Rede primeiro, com LIMITE_REDE_MS. Passou do limite ou deu erro: a cópia do
+ * cache. Depois de um limite estourado, por REDE_LENTA_MS os próximos arquivos
+ * já saem do cache sem esperar (senão cada nível de import somaria 3 s).
+ * Sem cópia no cache, espera a rede mesmo (ou o erro dela).
+ */
+const LIMITE_REDE_MS = 3000;
+const REDE_LENTA_MS = 10000;
+let redeLentaAte = 0;
+
+async function arquivoDoApp(req, daRede) {
+  const doCache = () => caches.match(req, { ignoreSearch: true })
+    .then((r) => r ?? (req.mode === "navigate" ? caches.match("./index.html") : undefined));
+
+  if (Date.now() < redeLentaAte) {
+    const emCache = await doCache();
+    if (emCache) return emCache;
+  }
+
+  let estourou = false;
+  try {
+    const resposta = await Promise.race([
+      daRede,
+      new Promise((_, falhar) => setTimeout(() => { estourou = true; falhar(new Error("lenta")); }, LIMITE_REDE_MS)),
+    ]);
+    redeLentaAte = 0;
+    return resposta;
+  } catch {
+    if (estourou) redeLentaAte = Date.now() + REDE_LENTA_MS;
+    const emCache = await doCache();
+    if (emCache) return emCache;
+    return daRede.catch(() => Response.error());
+  }
+}

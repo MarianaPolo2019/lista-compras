@@ -20,7 +20,7 @@
 // ============================================================================
 
 import { configurado } from "./config.js";
-import { auth, consultas } from "./api.js";
+import { auth, consultas, aoAtualizar } from "./api.js";
 import { esc, htmlErro, avisar, plural } from "./ui.js";
 import { iniciarConexao, aoMudarConexao, aoMudarLista, htmlSelo, definirPendentes } from "./conexao.js";
 import { semInternet } from "./rede.js";
@@ -181,9 +181,68 @@ function ligarAoVivo() {
   // A preferência vale assim que o app abre, não só depois de visitar Ajustes.
   // Se a leitura falhar, a tela continua apagando como o celular quiser; o erro
   // real aparece nas telas, que fazem as mesmas leituras.
-  consultas.configuracoes()
+  const lerTelaAcesa = () => consultas.configuracoes()
     .then((c) => aplicarTelaAcesa(c?.manter_tela_acesa))
     .catch(() => {});
+  lerTelaAcesa();
+
+  // A tela foi desenhada com a cópia do aparelho e o servidor respondeu depois
+  // com algo diferente (api.js, comCache): redesenha em silêncio. Nunca no meio
+  // de uma digitação: espera o campo ser solto.
+  let agendado = null;
+  aoAtualizar((chave) => {
+    if (chave === "configuracoes") lerTelaAcesa();
+    clearTimeout(agendado);
+    const tentar = () => {
+      if (document.activeElement?.closest?.("#tela, #topo-tela") && document.activeElement.matches("input, textarea")) {
+        agendado = setTimeout(tentar, 800);
+        return;
+      }
+      desenhar({ silencioso: true });
+    };
+    agendado = setTimeout(tentar, 150);
+  });
+}
+
+/**
+ * Abriu com o acesso guardado (sem esperar a rede): confere em segundo plano.
+ * Sessão encerrada ou de outra pessoa, ou não é mais do casal → esquece o
+ * acesso e recarrega (vai para o Login ou para "Acesso não liberado"). Falha
+ * de rede → segue com o que está guardado.
+ */
+async function conferirAcesso(salvo) {
+  let sessao;
+  try {
+    sessao = await auth.sessao();
+  } catch {
+    return;
+  }
+  if (!sessao?.user) {
+    if (semInternet()) return;
+    esquecerAcesso();
+    location.reload();
+    return;
+  }
+  if (sessao.user.id !== salvo.usuario.id) {
+    esquecerAcesso();
+    location.reload();
+    return;
+  }
+  let membro;
+  try {
+    membro = await auth.ehMembro(sessao.user.id);
+  } catch {
+    return;
+  }
+  if (!membro) {
+    esquecerAcesso();
+    location.reload();
+    return;
+  }
+  const membros = await consultas.membros().catch(() => salvo.membros);
+  const acesso = { usuario: { id: sessao.user.id, email: sessao.user.email }, membro, membros };
+  guardarAcesso(acesso);
+  entrarComAcesso(acesso);
 }
 
 // ---------------------------------------------------------------------------
@@ -217,6 +276,16 @@ async function iniciar() {
   await fila.carregarFila().catch((e) => console.error("Fila do aparelho indisponível", e));
 
   const salvo = lerAcesso();
+
+  // Já entrou neste aparelho antes: abre NA HORA com o acesso guardado e a
+  // cópia dos dados, sem esperar sessão nem rede (sinal fraco no mercado), e
+  // confere tudo em segundo plano.
+  if (salvo?.usuario && salvo.membro) {
+    entrarComAcesso(salvo);
+    conferirAcesso(salvo);
+    return finalizarEntrada();
+  }
+
   let sessao = null, erroSessao = null;
   try {
     sessao = await auth.sessao();

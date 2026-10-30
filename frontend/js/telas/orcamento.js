@@ -494,7 +494,25 @@ async function reiniciarLista() {
     ],
     aoEscolher: async (_, dialogo) => {
       const nomeMercado = dialogo.el.querySelector("[data-mercado]").value.replace(/\s+/g, " ").trim() || null;
-      const id = await acoes.finalizarCompra(hoje, nomeMercado);
+      let id;
+      try {
+        id = await acoes.finalizarCompra(hoje, nomeMercado);
+      } catch (e) {
+        if (!e.rede) throw e;
+        // A resposta não chegou (sem rede ou passou do limite). O pedido pode
+        // ter chegado ao banco ou não: NÃO presume nenhum dos dois. Fecha o
+        // diálogo, relê do servidor o que der e manda conferir no Histórico.
+        // Tentar de novo é seguro: se a compra foi salva, a lista do servidor
+        // está zerada e "Reiniciar lista" para em "Carrinho vazio".
+        dialogo.fechar();
+        avisar("Não deu para confirmar. Confira no Histórico se a compra foi salva.");
+        // Lista (e a cópia dela no aparelho) e preços como o servidor tem agora.
+        // O Histórico lê sempre do servidor ao abrir.
+        Promise.all([consultas.itensDaListaDoServidor(), consultas.historicoDePrecos()])
+          .catch(() => {})
+          .finally(() => { if (location.hash.startsWith("#/orcamento")) st.ctx?.redesenhar(); });
+        return true;
+      }
       avisar("Compra salva no Histórico", "ok");
       location.hash = `#/historico/${id}`;
       return true;

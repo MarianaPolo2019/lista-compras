@@ -14,6 +14,8 @@
 // resposta bem-sucedida no aparelho (local.js). Se o servidor não responde por
 // REDE, volta essa cópia; se o servidor responde com erro, o erro sobe. Toda
 // falha de rede é avisada a rede.js, e todo sucesso desfaz o aviso.
+// SINAL FRACO: cada pedido tem limite de 6 s (fetchComLimite), e uma leitura
+// com cópia não segura a tela mais que 0,4 s (comCache).
 //
 // A versão do supabase-js é FIXA na URL (2.118.0, não "@2"): o service worker
 // guarda esses arquivos para o app abrir sem internet, e uma URL que muda de
@@ -26,6 +28,29 @@ import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./config.js";
 import { registrarFalhaDeRede, registrarSucessoDeRede, ehErroDeRede } from "./rede.js";
 import * as local from "./local.js";
 
+/**
+ * SINAL FRACO: o celular diz que tem rede, mas a resposta demora ou nunca
+ * chega. Toda conversa com o Supabase (dados, login, funções) tem LIMITE_MS;
+ * passou disso, o pedido é cancelado e falha COMO SEM INTERNET ("Failed to
+ * fetch"): leitura cai na cópia do aparelho, gravação da Lista fica na fila,
+ * e o selo vira "Offline". O cancelamento usa o próprio motivo como erro,
+ * então vale também para uma resposta que começou a chegar e travou no meio.
+ */
+export const LIMITE_MS = 6000;
+
+function fetchComLimite(entrada, init = {}) {
+  const controle = new AbortController();
+  const externo = init.signal;
+  if (externo) {
+    if (externo.aborted) controle.abort(externo.reason);
+    else externo.addEventListener("abort", () => controle.abort(externo.reason), { once: true });
+  }
+  // Não é limpo quando a resposta chega: o corpo ainda pode travar. Cancelar
+  // um pedido que já terminou não faz nada.
+  setTimeout(() => controle.abort(new TypeError(`Failed to fetch (sem resposta em ${LIMITE_MS / 1000} s)`)), LIMITE_MS);
+  return fetch(entrada, { ...init, signal: controle.signal });
+}
+
 export const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   // retry: false — sem isto, cada leitura que falha por rede é repetida pela
   // biblioteca com espera crescente (~7 s por consulta), e o app sem internet
@@ -33,6 +58,7 @@ export const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   // nova leitura quando a rede volta, quando o Realtime reconecta e a cada 15 s.
   db: { schema: "mercado", retry: false },
   auth: { persistSession: true, autoRefreshToken: true },
+  global: { fetch: fetchComLimite },
 });
 
 /** `rede = true`: o servidor não respondeu (sem internet), não é uma recusa. */
@@ -85,20 +111,50 @@ function conferir({ data, error, count }) {
 }
 
 /**
- * Leitura com cópia no aparelho: servidor respondeu → guarda e devolve;
- * falhou por rede e há cópia → devolve a cópia; qualquer outro caso → erro.
+ * Leitura com cópia no aparelho. A tela nunca espera a rede além de ESPERA_MS
+ * quando já existe cópia:
+ *   - o servidor responde dentro de ESPERA_MS → guarda e devolve (caso comum
+ *     com sinal bom: a tela já nasce com o dado do servidor);
+ *   - não respondeu ainda e há cópia → devolve a cópia AGORA e deixa o pedido
+ *     seguindo. Quando ele chegar, guarda; se mudou algo, avisa quem escuta
+ *     `aoAtualizar` (o app redesenha a tela em silêncio). Se falhar por rede
+ *     (inclusive pelo LIMITE_MS), o selo já virou "Offline" pelo erroDe;
+ *   - sem cópia → espera o servidor (ou o erro dele), como antes.
  */
+const ESPERA_MS = 400;
+const ouvintesAtualizar = new Set();
+
+/** Chamado com a chave da leitura que chegou do servidor diferente da cópia já mostrada. */
+export function aoAtualizar(fn) {
+  ouvintesAtualizar.add(fn);
+  return () => ouvintesAtualizar.delete(fn);
+}
+
 async function comCache(chave, buscar) {
-  try {
-    const valor = await buscar();
-    local.guardar(chave, valor).catch(() => {});
+  const pedido = buscar().then(async (valor) => {
+    // Guarda ANTES de avisar `aoAtualizar`: o redesenho que vem depois lê a cópia nova.
+    await local.guardar(chave, valor).catch(() => {});
     return valor;
+  });
+  pedido.catch(() => {}); // tratado abaixo; evita o aviso de "rejeição sem dono" enquanto lê a cópia
+  const guardado = await local.ler(chave).catch(() => undefined);
+  if (guardado === undefined) return pedido;
+
+  const ESGOTOU = Symbol("esgotou");
+  let primeiro;
+  try {
+    primeiro = await Promise.race([pedido, new Promise((r) => setTimeout(() => r(ESGOTOU), ESPERA_MS))]);
   } catch (e) {
     if (!e.rede) throw e;
-    const guardado = await local.ler(chave).catch(() => undefined);
-    if (guardado === undefined) throw e;
     return guardado.valor;
   }
+  if (primeiro !== ESGOTOU) return primeiro;
+
+  pedido.then((valor) => {
+    if (JSON.stringify(valor) === JSON.stringify(guardado.valor)) return;
+    for (const fn of ouvintesAtualizar) fn(chave);
+  }).catch((e) => { if (!e.rede) console.error(`Leitura de ${chave} falhou`, e); });
+  return guardado.valor;
 }
 
 // ---------------------------------------------------------------------------
@@ -171,7 +227,9 @@ export const consultas = {
 
   /** Sempre do servidor, nunca da cópia: é para conferir o estado real agora. */
   async itensDaListaDoServidor() {
-    return conferir(await sb.from("lista_itens").select(COLUNAS_ITEM)) ?? [];
+    const itens = conferir(await sb.from("lista_itens").select(COLUNAS_ITEM)) ?? [];
+    await local.guardar("lista_itens", itens).catch(() => {});
+    return itens;
   },
 
   /**
@@ -252,6 +310,23 @@ export const consultas = {
 // ---------------------------------------------------------------------------
 // Escritas
 // ---------------------------------------------------------------------------
+
+/**
+ * Põe na cópia do aparelho a linha que o servidor acabou de confirmar
+ * (`linha` null = apagada). Sem isto, com sinal fraco a próxima abertura
+ * mostraria a cópia de antes da gravação até o servidor responder.
+ */
+async function atualizarCopiaDaLista(produtoId, linha) {
+  try {
+    const guardado = await local.ler("lista_itens");
+    if (guardado) {
+      const itens = guardado.valor.filter((i) => i.produto_id !== produtoId);
+      if (linha) itens.push(linha);
+      await local.guardar("lista_itens", itens);
+    }
+  } catch { /* sem cópia no aparelho: nada a atualizar */ }
+  return linha;
+}
 export const acoes = {
   /**
    * Grava um item da lista e devolve a linha como o banco a guardou.
@@ -268,12 +343,12 @@ export const acoes = {
     if (linhaExiste) {
       const linha = conferir(await sb.from("lista_itens")
         .update(campos).eq("produto_id", produtoId).select(COLUNAS_ITEM).maybeSingle());
-      if (linha) return linha;
+      if (linha) return atualizarCopiaDaLista(produtoId, linha);
       // A linha sumiu entre a leitura e a gravação: cai para o upsert abaixo.
     }
-    return conferir(await sb.from("lista_itens")
+    return atualizarCopiaDaLista(produtoId, conferir(await sb.from("lista_itens")
       .upsert({ produto_id: produtoId, ...campos }, { onConflict: "produto_id" })
-      .select(COLUNAS_ITEM).single());
+      .select(COLUNAS_ITEM).single()));
   },
 
   // --- Categorias (Ajustes) --------------------------------------------------
@@ -332,6 +407,7 @@ export const acoes = {
   /** Apaga a linha do produto em lista_itens (se não existir, não faz nada). */
   async apagarItemDaLista(produtoId) {
     conferir(await sb.from("lista_itens").delete().eq("produto_id", produtoId));
+    await atualizarCopiaDaLista(produtoId, null);
   },
 
   /** Grava o limite de gastos (null = sem limite) e devolve o valor confirmado. */

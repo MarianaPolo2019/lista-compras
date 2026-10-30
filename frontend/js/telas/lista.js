@@ -123,7 +123,9 @@ function ligarOuvintes() {
     // Fila vazia e confirmada: relê lista_itens do servidor, e a tela passa a
     // mostrar o que ficou no banco (inclusive o que o Carlos mudou nesse meio).
     try {
-      const itens = await consultas.itensDaLista();
+      // Do servidor mesmo (não a cópia): com sinal fraco, a cópia poderia
+      // chegar primeiro e a tela voltaria a um estado de antes da fila.
+      const itens = await consultas.itensDaListaDoServidor();
       st.confirmado = new Map(itens.map((i) => [i.produto_id, i]));
       montarLocal();
       st.remotos.clear();
