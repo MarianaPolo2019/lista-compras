@@ -331,15 +331,29 @@ button { cursor: pointer; }
   display: flex;
   align-items: center;
 }
+/* Arrastar com o mouse (lista.js): sem selecionar texto, cursor de mão. */
+.chips { touch-action: pan-x; user-select: none; -webkit-user-select: none; cursor: grab; }
+.chips--arrastando { cursor: grabbing; }
+.chips--arrastando .chip { pointer-events: none; }
+
 .tela--lista { margin-top: 10px; }
 .secao--carrinho { margin-top: 22px; }
+.secao__conta--total { font-weight: 700; color: var(--texto); font-size: 15px; }
 
 .cabecalho__prog { font-size: 12.5px; color: var(--texto-fraco); margin-top: 2px; }
 
+/* --------------------------------------------------------------------------
+   Linha da lista (5a–5e)
+   -------------------------------------------------------------------------- */
 .linha {
   border-bottom: 1px solid var(--divisoria);
   padding: 8px 10px;
   margin: 0 -10px;
+}
+/* Linha aberta: fundo cinza-claro e cantos de 14px, como no 5a. */
+.linha--aberta {
+  background: var(--fundo-linha-aberta);
+  border-radius: var(--raio-botao);
 }
 .linha__corpo {
   display: flex;
@@ -347,6 +361,22 @@ button { cursor: pointer; }
   gap: 14px;
   min-height: 48px;
 }
+/* O círculo tem 32px no desenho; o botão em volta tem 44px de toque, e a
+   margem negativa devolve o espaço para o círculo cair onde o design põe. */
+.linha__marcar,
+.carrinho__marcar {
+  width: var(--toque);
+  height: var(--toque);
+  margin: -6px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.carrinho__marcar { margin: -6px -3px; }
 .linha__marcador {
   width: 32px;
   height: 32px;
@@ -355,7 +385,19 @@ button { cursor: pointer; }
   background: #fff;
   flex: none;
 }
-.linha__texto { flex: 1; min-width: 0; }
+.linha__texto,
+.carrinho__texto {
+  flex: 1;
+  min-width: 0;
+  min-height: var(--toque);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
 .linha--zerada .linha__marcador,
 .linha--zerada .linha__texto { opacity: .45; }
 .linha__nome {
@@ -366,19 +408,38 @@ button { cursor: pointer; }
   text-overflow: ellipsis;
 }
 .linha__sub { font-size: 12.5px; color: var(--texto-fraco); margin-top: 1px; }
+.linha__mais {
+  width: var(--toque);
+  height: var(--toque);
+  border-radius: 50%;
+  border: 0;
+  background: var(--magenta-suave);
+  color: var(--magenta);
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
 
-/* "No carrinho": ✓ verde, nome apagado. */
+/* --------------------------------------------------------------------------
+   Linha no carrinho: ✓ verde, nome riscado e apagado, total à direita
+   -------------------------------------------------------------------------- */
 .carrinho {
+  border-bottom: 1px solid var(--divisoria);
+}
+.carrinho.linha--aberta { padding: 0 10px 8px; margin: 0 -10px; }
+.carrinho__corpo {
   display: flex;
   align-items: center;
   gap: 14px;
   min-height: 56px;
-  border-bottom: 1px solid var(--divisoria);
 }
 .carrinho__check {
   width: 26px;
   height: 26px;
-  margin: 0 3px;
   border-radius: 50%;
   background: var(--desceu-fundo);
   color: var(--desceu);
@@ -389,17 +450,249 @@ button { cursor: pointer; }
   justify-content: center;
   flex: none;
 }
-.carrinho__texto { flex: 1; min-width: 0; }
 .carrinho__nome {
   font-size: 15px;
   font-weight: 600;
   color: var(--texto-fraco);
+  text-decoration: line-through;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.carrinho__sub,
+.linha__sub {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .carrinho__sub { font-size: 12.5px; color: var(--texto-apagado); }
-.carrinho__total { font-size: 15px; font-weight: 700; text-align: right; }
+.carrinho__total { font-size: 15px; font-weight: 700; text-align: right; white-space: nowrap; }
+.carrinho__total--sem { font-size: 13px; font-weight: 600; color: var(--texto-fraco); }
+
+/* --------------------------------------------------------------------------
+   Linha aberta: marca, contador, preço, conta e selo (5a–5e)
+   -------------------------------------------------------------------------- */
+.editor { margin-top: 8px; padding-left: 46px; }
+.carrinho .editor { padding-left: 40px; }
+.editor__marca { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.editor__rotulo { font-size: 12.5px; color: var(--texto-fraco); }
+.chip-marca {
+  height: var(--toque);
+  padding: 0 12px 0 14px;
+  border-radius: var(--raio-pilula);
+  background: #fff;
+  border: 1.5px solid var(--borda);
+  font-size: 14px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+}
+.chip-marca--aberto { border-color: var(--magenta); }
+.chip-marca--vazio { color: var(--texto-apagado); }
+.chip-marca__seta { font-size: 11px; color: var(--texto-fraco); }
+
+.marcas {
+  background: #fff;
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-botao);
+  margin-bottom: 10px;
+  padding: 0 12px;
+}
+.marcas__opcao {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 52px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--divisoria);
+  background: transparent;
+  text-align: left;
+}
+.marcas__opcao:last-child { border-bottom: 0; }
+.marcas__texto { flex: 1; display: flex; flex-direction: column; }
+.marcas__nome { font-size: 15px; font-weight: 700; color: var(--texto); }
+.marcas__sub { font-size: 12.5px; color: var(--texto-fraco); }
+.marcas__check { color: var(--magenta); font-weight: 800; }
+.marcas__opcao--outra .marcas__nome { font-weight: 600; color: var(--magenta); }
+.marcas__outra { display: flex; gap: 8px; align-items: center; min-height: 60px; }
+.marcas__entrada {
+  flex: 1;
+  min-width: 0;
+  height: var(--toque);
+  border: 1.5px solid var(--magenta);
+  border-radius: var(--raio-pequeno);
+  padding: 0 12px;
+  font-size: 16px;
+  outline: none;
+}
+.marcas__ok {
+  height: var(--toque);
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--raio-pequeno);
+  background: var(--magenta);
+  color: #fff;
+  font-weight: 700;
+}
+
+.editor__controles { display: flex; align-items: center; gap: 10px; }
+.contador {
+  display: flex;
+  align-items: center;
+  background: #fff;
+  border: 1px solid var(--borda);
+  border-radius: var(--raio-pilula);
+  padding: 3px;
+  flex: none;
+}
+.contador__menos,
+.contador__mais {
+  width: var(--toque);
+  height: var(--toque);
+  border-radius: 50%;
+  border: 0;
+  font-size: 22px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.contador__menos { background: var(--fundo-cinza); color: var(--texto); }
+.contador__mais { background: var(--magenta); color: #fff; }
+.contador__valor { width: 34px; text-align: center; font-size: 18px; font-weight: 700; }
+
+.preco {
+  flex: 1;
+  min-width: 0;
+  height: 52px;
+  border-radius: var(--raio-botao);
+  background: #fff;
+  border: 2px solid var(--magenta);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+}
+.preco--invalido { border-color: var(--subiu); background: var(--subiu-fundo); }
+.preco__moeda { font-size: 13px; font-weight: 600; color: var(--texto-fraco); }
+.preco__entrada {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  text-align: right;
+  font-size: 18px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--texto);
+  outline: none;
+}
+.preco__entrada::placeholder { color: var(--texto-vazio); }
+
+.editor__conta { font-size: 13px; font-weight: 600; color: var(--texto-forte); margin-top: 6px; }
+.editor__conta:empty { display: none; }
+.editor__selo { margin-top: 8px; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; }
+.editor__selo:empty { display: none; }
+
+.selo-preco {
+  font-size: 12.5px;
+  font-weight: 700;
+  padding: 5px 10px;
+  border-radius: var(--raio-pilula);
+}
+.selo-preco--subiu { background: var(--subiu-fundo); color: var(--subiu); }
+.selo-preco--desceu { background: var(--desceu-fundo); color: var(--desceu); }
+.selo-preco--neutro { background: var(--neutro-fundo); color: var(--neutro); }
+.selo-preco--outra { background: var(--outra-marca-fundo); color: var(--outra-marca); }
+.selo-preco__contra { font-size: 12px; color: var(--texto-fraco); }
+/* "Digite o preço…" do 5c: texto, sem fundo. */
+.selo-aviso { font-size: 12.5px; font-weight: 700; color: var(--texto-fraco); }
+
+/* --------------------------------------------------------------------------
+   6b: cartão "Adicionar …" e a folha de escolher o corredor (estilo 7d)
+   -------------------------------------------------------------------------- */
+.adicionar {
+  width: 100%;
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 2px solid var(--magenta);
+  border-radius: var(--raio-cartao-acao);
+  padding: 12px 14px;
+  background: #fff;
+  text-align: left;
+}
+.adicionar__mais {
+  width: var(--toque);
+  height: var(--toque);
+  border-radius: 50%;
+  background: var(--magenta);
+  color: #fff;
+  font-size: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.adicionar__titulo { display: block; font-weight: 800; font-size: 16px; }
+.adicionar__sub { display: block; font-size: 12.5px; color: var(--texto-fraco); margin-top: 2px; }
+
+.folha { position: fixed; inset: 0; z-index: 30; }
+.folha__veu { position: absolute; inset: 0; background: var(--veu); }
+.folha__painel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-width: 480px;
+  max-height: 85vh;
+  margin: 0 auto;
+  overflow: auto;
+  background: #fff;
+  border-radius: var(--raio-folha) var(--raio-folha) 0 0;
+  padding: 10px var(--margem) calc(18px + env(safe-area-inset-bottom, 0px));
+  box-shadow: var(--sombra-folha);
+}
+.folha__alca { width: 44px; height: 5px; border-radius: 9px; background: var(--alca); margin: 0 auto 12px; }
+.folha__titulo { font-size: 20px; font-weight: 800; letter-spacing: -.3px; }
+.folha__texto { font-size: 14.5px; color: var(--texto-fraco); margin-top: 6px; line-height: 1.45; }
+.folha__lista { margin-top: 8px; }
+.folha__opcao {
+  width: 100%;
+  min-height: 52px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--divisoria);
+  background: transparent;
+  text-align: left;
+  font-size: 16px;
+  font-weight: 600;
+}
+.folha__cancelar { margin-top: 16px; }
+
+/* Aviso de falha, logo acima da barra de abas. */
+.aviso-flutuante {
+  position: fixed;
+  left: var(--margem);
+  right: var(--margem);
+  bottom: calc(var(--altura-abas) + env(safe-area-inset-bottom, 0px) + 12px);
+  max-width: calc(480px - 2 * var(--margem));
+  margin: 0 auto;
+  z-index: 40;
+  background: var(--subiu-fundo);
+  color: var(--subiu);
+  border-radius: var(--raio-botao);
+  padding: 12px 14px;
+  font-size: 14px;
+  font-weight: 700;
+  box-shadow: var(--sombra-dialogo);
+}
 
 /* --------------------------------------------------------------------------
    Estados vazios (6a "Nenhum item para levar", 6b "Nenhum produto encontrado")

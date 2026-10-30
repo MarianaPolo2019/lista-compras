@@ -28,6 +28,34 @@ export function dataBR(iso) {
   return a && m && d ? `${d}/${m}/${a}` : "";
 }
 
+/** "2026-08-25" → "25/08", o formato curto que o design usa nos selos de preço. */
+export function dataCurta(iso) {
+  const [, m, d] = String(iso ?? "").slice(0, 10).split("-");
+  return m && d ? `${d}/${m}` : "";
+}
+
+/**
+ * Aviso flutuante logo acima da barra de abas, nas cores do alerta vermelho.
+ * Some sozinho depois de alguns segundos; um aviso novo substitui o anterior.
+ * É para falha que já foi tratada (a tela já voltou ao que está no banco) e
+ * que a pessoa precisa saber que aconteceu.
+ */
+let temporizadorAviso = null;
+export function avisar(texto) {
+  let el = document.getElementById("aviso-flutuante");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "aviso-flutuante";
+    el.className = "aviso-flutuante";
+    el.setAttribute("role", "alert");
+    document.body.appendChild(el);
+  }
+  el.textContent = texto;
+  el.hidden = false;
+  clearTimeout(temporizadorAviso);
+  temporizadorAviso = setTimeout(() => { el.hidden = true; }, 6000);
+}
+
 /** 1 → "1 item", 3 → "3 itens". */
 export function plural(n, um, varios) {
   return `${n} ${n === 1 ? um : varios}`;

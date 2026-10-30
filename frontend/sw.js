@@ -11,7 +11,7 @@
 
 // Trocar esta versão é o que faz o app atualizar no celular: o activate abaixo
 // apaga todo cache com chave diferente. Incremente a cada mudança de arquivo.
-const VERSAO = "minhas-compras-v1";
+const VERSAO = "minhas-compras-v2";
 
 const CASCO = [
   "./",

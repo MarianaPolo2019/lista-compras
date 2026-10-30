@@ -24,8 +24,13 @@ const estado = {
 
 const ouvintesConexao = new Set();
 const ouvintesLista = new Set();
+const ouvintesReconexao = new Set();
 
 let canal = null;
+// Já esteve inscrito alguma vez? A primeira inscrição é o começo normal; as
+// seguintes são reconexões, e numa reconexão o que mudou enquanto o canal
+// estava caído não chegou: quem escuta `aoReconectar` precisa reler.
+let jaInscreveu = false;
 
 export function estaOnline() {
   return estado.rede && estado.inscrito;
@@ -41,10 +46,19 @@ export function aoMudarConexao(fn) {
   return () => ouvintesConexao.delete(fn);
 }
 
-/** Chamado quando alguma linha de mercado.lista_itens muda (aqui ou no outro celular). */
+/**
+ * Chamado quando alguma linha de mercado.lista_itens muda (aqui ou no outro
+ * celular), com o payload do Realtime: { eventType, new, old }.
+ */
 export function aoMudarLista(fn) {
   ouvintesLista.add(fn);
   return () => ouvintesLista.delete(fn);
+}
+
+/** Chamado quando o canal volta a ficar inscrito depois de ter caído. */
+export function aoReconectar(fn) {
+  ouvintesReconexao.add(fn);
+  return () => ouvintesReconexao.delete(fn);
 }
 
 function avisarConexao() {
@@ -65,14 +79,15 @@ export function iniciarConexao(userId) {
   window.addEventListener("offline", () => { estado.rede = false; avisarConexao(); });
 
   canal = sb.channel("mercado-lista", { config: { presence: { key: userId } } })
-    .on("postgres_changes", { event: "*", schema: "mercado", table: "lista_itens" }, () => {
-      for (const fn of ouvintesLista) fn();
+    .on("postgres_changes", { event: "*", schema: "mercado", table: "lista_itens" }, (payload) => {
+      for (const fn of ouvintesLista) fn(payload);
     })
     .on("presence", { event: "sync" }, () => { lerPresenca(); avisarConexao(); })
     .subscribe(async (status) => {
       // SUBSCRIBED é o único estado em que as mudanças chegam. CHANNEL_ERROR,
       // TIMED_OUT e CLOSED derrubam o selo para Offline; o supabase-js tenta
       // reinscrever sozinho e, quando voltar a SUBSCRIBED, o selo volta.
+      const estavaInscrito = estado.inscrito;
       estado.inscrito = status === "SUBSCRIBED";
       if (estado.inscrito) {
         try { await canal.track({ user_id: userId }); } catch { /* presença é extra; o selo não depende dela */ }
@@ -80,6 +95,10 @@ export function iniciarConexao(userId) {
         estado.presentes = new Set();
       }
       avisarConexao();
+      if (estado.inscrito && !estavaInscrito) {
+        if (jaInscreveu) for (const fn of ouvintesReconexao) fn();
+        jaInscreveu = true;
+      }
     });
 }
 

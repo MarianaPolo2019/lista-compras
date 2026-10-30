@@ -21,6 +21,9 @@ export const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
 
 export class ErroApi extends Error {}
 
+/** As colunas de lista_itens que o app lê e grava (sem atualizado_por/updated_at). */
+const COLUNAS_ITEM = "produto_id, quantidade, no_carrinho, marca, preco_unitario, marcado_por";
+
 /**
  * Mensagem que a Mari consegue entender. Os erros comuns ganham frase própria;
  * qualquer outro passa com o texto original, para nunca virar um "deu certo"
@@ -37,6 +40,11 @@ function traduzir(error) {
   }
   if (/jwt expired|invalid jwt/i.test(bruto)) {
     return "A sessão expirou. Saia e entre de novo.";
+  }
+  // Índice único que ignora acento e maiúscula (mercado.normalizar): o texto
+  // original do banco vai junto, para ninguém ter de adivinhar qual regra barrou.
+  if (error?.code === "23505") {
+    return `Já existe um cadastro com esse nome (o app não diferencia acento nem maiúscula). Detalhe: ${bruto}`;
   }
   return bruto || "Não consegui completar a operação.";
 }
@@ -97,8 +105,26 @@ export const consultas = {
   },
 
   async itensDaLista() {
-    return conferir(await sb.from("lista_itens")
-      .select("produto_id, quantidade, no_carrinho, marca, preco_unitario, marcado_por")) ?? [];
+    return conferir(await sb.from("lista_itens").select(COLUNAS_ITEM)) ?? [];
+  },
+
+  /**
+   * Todas as linhas de compra_itens com a data da compra, para a Lista calcular
+   * no aparelho a última compra de cada produto e de cada produto + marca.
+   * Lido em páginas de 1000 (o teto do PostgREST): uma resposta cortada no meio
+   * daria "última" errada sem ninguém perceber.
+   */
+  async historicoDePrecos() {
+    const PAGINA = 1000;
+    const linhas = [];
+    for (let de = 0; ; de += PAGINA) {
+      const parte = conferir(await sb.from("compra_itens")
+        .select("produto_id, marca, preco_unitario, compras!inner(data, created_at)")
+        .order("id")
+        .range(de, de + PAGINA - 1)) ?? [];
+      linhas.push(...parte);
+      if (parte.length < PAGINA) return linhas;
+    }
   },
 
   async configuracoes() {
@@ -128,6 +154,36 @@ export const consultas = {
 // Escritas
 // ---------------------------------------------------------------------------
 export const acoes = {
+  /**
+   * Grava um item da lista e devolve a linha como o banco a guardou.
+   *
+   * Linha que já existe: UPDATE só dos campos que mudaram, para não
+   * sobrescrever com valor velho o que o outro celular acabou de gravar em
+   * outro campo. Linha nova (primeira vez que o produto é tocado): UPSERT por
+   * produto_id, que também resolve o caso de o outro celular ter criado a
+   * linha um instante antes.
+   *
+   * atualizado_por e updated_at NÃO vão: quem preenche é o trigger do banco.
+   */
+  async gravarItem(produtoId, campos, linhaExiste) {
+    if (linhaExiste) {
+      const linha = conferir(await sb.from("lista_itens")
+        .update(campos).eq("produto_id", produtoId).select(COLUNAS_ITEM).maybeSingle());
+      if (linha) return linha;
+      // A linha sumiu entre a leitura e a gravação: cai para o upsert abaixo.
+    }
+    return conferir(await sb.from("lista_itens")
+      .upsert({ produto_id: produtoId, ...campos }, { onConflict: "produto_id" })
+      .select(COLUNAS_ITEM).single());
+  },
+
+  /** Cadastra um produto novo e devolve a linha criada. */
+  async criarProduto(nome, categoriaId) {
+    return conferir(await sb.from("produtos")
+      .insert({ nome, categoria_id: categoriaId })
+      .select("id, nome, categoria_id, ativo").single());
+  },
+
   /** Grava a preferência e devolve o valor que o banco confirmou. */
   async manterTelaAcesa(valor) {
     const linha = conferir(await sb.from("configuracoes")

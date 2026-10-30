@@ -16,7 +16,7 @@ import { configurado } from "./config.js";
 import { auth, consultas } from "./api.js";
 import { esc, htmlErro } from "./ui.js";
 import { iniciarConexao, aoMudarConexao, aoMudarLista, htmlSelo } from "./conexao.js";
-import { aplicarTelaAcesa } from "./tela-acesa.js";
+import { aplicarTelaAcesa, definirNaLista } from "./tela-acesa.js";
 
 import { telaLogin } from "./telas/login.js";
 import { telaAcessoNegado, telaFalhaNaConferencia } from "./telas/acesso.js";
@@ -70,6 +70,7 @@ async function desenhar({ silencioso = false } = {}) {
   const minha = ++geracao;
   const nome = rotaAtual();
   const rota = ROTAS[nome];
+  definirNaLista(nome === "lista");
 
   for (const item of el.abas.querySelectorAll(".abas__item")) {
     if (item.dataset.rota === nome) item.setAttribute("aria-current", "page");
@@ -136,8 +137,9 @@ function ligarAoVivo() {
   });
 
   aoMudarLista(() => {
-    // Só as telas que dependem de lista_itens: o Histórico e os Ajustes não mudam.
-    if (rotaAtual() === "lista" || rotaAtual() === "orcamento") desenhar({ silencioso: true });
+    // O Orçamento relê tudo. A Lista NÃO passa por aqui: ela aplica cada
+    // mudança na própria linha (lista.js), sem apagar o que está sendo digitado.
+    if (rotaAtual() === "orcamento") desenhar({ silencioso: true });
   });
 
   // A preferência vale assim que o app abre, não só depois de visitar Ajustes.
