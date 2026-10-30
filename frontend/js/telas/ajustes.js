@@ -5,8 +5,8 @@
 //   presença do canal Realtime (quem está com o app aberto neste momento); para
 //   quem está usando, vale o mesmo selo do cabeçalho da Lista.
 // - Cadastros: as contagens reais de categorias e de produtos ATIVOS (produto
-//   excluído é desativado, não apagado). As telas de editar categorias e
-//   produtos são da próxima etapa, então as linhas ainda não levam o "›".
+//   excluído é desativado, não apagado). Cada linha abre a sua tela:
+//   Categorias (categorias.js, 6h) e Produtos (produtos.js, 6i).
 // - Durante a compra: "Manter tela acesa", lido de mercado.configuracoes e
 //   gravado lá ao tocar. A chave só muda de posição depois que o banco
 //   confirma; se a gravação falhar, ela volta e a tela mostra o erro.
@@ -16,15 +16,23 @@ import { consultas, acoes } from "../api.js";
 import { esc, htmlAvatar } from "../ui.js";
 import { estaOnline, estaPresente } from "../conexao.js";
 import { aplicarTelaAcesa, suportado as wakeLockSuportado } from "../tela-acesa.js";
+import { telaCategorias } from "./categorias.js";
+import { telaProdutos } from "./produtos.js";
 
+/** #/ajustes, #/ajustes/categorias (6h) e #/ajustes/produtos (6i). */
 export async function telaAjustes(ctx) {
-  const [membros, categorias, produtos, config] = await Promise.all([
-    consultas.membros(),
-    consultas.contar("categorias"),
-    consultas.contar("produtos", (q) => q.eq("ativo", true)),
-    consultas.configuracoes(),
+  const sub = (location.hash || "").replace(/^#\//, "").split("/")[1];
+  if (sub === "categorias") return telaCategorias(ctx);
+  if (sub === "produtos") return telaProdutos(ctx);
+
+  // As contagens saem das mesmas leituras da Lista (que têm cópia no aparelho),
+  // para os Ajustes abrirem também sem internet.
+  const [membros, listaCategorias, listaProdutos, config] = await Promise.all([
+    consultas.membros(), consultas.categorias(), consultas.produtos(), consultas.configuracoes(),
   ]);
   if (!ctx.vivo()) return;
+  const categorias = listaCategorias.length;
+  const produtos = listaProdutos.filter((p) => p.ativo).length;
 
   const eu = ctx.estado.usuario.id;
   const telaAcesa = !!config?.manter_tela_acesa;
@@ -52,8 +60,14 @@ export async function telaAjustes(ctx) {
     }).join("")}
 
     <div class="secao secao--ajustes"><span class="secao__titulo">Cadastros</span></div>
-    <div class="cadastro"><span class="cadastro__nome">Categorias</span><span class="cadastro__conta">${categorias}</span></div>
-    <div class="cadastro"><span class="cadastro__nome">Produtos</span><span class="cadastro__conta">${produtos}</span></div>
+    <a class="cadastro" href="#/ajustes/categorias">
+      <span class="cadastro__nome">Categorias</span><span class="cadastro__conta">${categorias}</span>
+      <span class="cadastro__seta" aria-hidden="true">›</span>
+    </a>
+    <a class="cadastro" href="#/ajustes/produtos">
+      <span class="cadastro__nome">Produtos</span><span class="cadastro__conta">${produtos}</span>
+      <span class="cadastro__seta" aria-hidden="true">›</span>
+    </a>
 
     <div class="secao secao--ajustes"><span class="secao__titulo">Durante a compra</span></div>
     <div class="opcao">

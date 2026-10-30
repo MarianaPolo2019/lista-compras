@@ -1274,3 +1274,111 @@ button.compra {
 .selo-mini--subiu { background: var(--subiu-fundo); color: var(--subiu); }
 .selo-mini--desceu { background: var(--desceu-fundo); color: var(--desceu); }
 .selo-mini--neutro { background: var(--neutro-fundo); color: var(--neutro); }
+
+/* ==========================================================================
+   Etapa 4 — Ajustes (Categorias, Produtos) e modo sem internet
+   ========================================================================== */
+
+/* Lista: o risco do carrinho só no nome (o relógio de pendente fica limpo). */
+.carrinho__nome { text-decoration: none; }
+.carrinho__riscado { text-decoration: line-through; }
+
+/* Relógio de "alteração ainda não enviada", ao lado do nome. */
+.pendente {
+  display: inline-block;
+  vertical-align: -1px;
+  margin-left: 6px;
+  color: var(--offline);
+  flex: none;
+}
+
+/* Ajustes: as linhas de Cadastros abrem as telas (6g). */
+a.cadastro { color: inherit; text-decoration: none; }
+.cadastro__seta { font-size: 22px; color: var(--texto-apagado); margin-left: 10px; }
+
+/* Categorias (6h) */
+.categorias__dica { font-size: 13.5px; color: var(--texto-fraco); margin: 14px 0 6px; }
+.cat {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 64px;
+  margin: 0 -8px;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--divisoria);
+  background: var(--fundo);
+}
+.cat--arrastando {
+  z-index: 3;
+  background: #fff;
+  box-shadow: var(--sombra-arrastando);
+  border-radius: var(--raio-botao);
+  border-bottom-color: transparent;
+}
+.cat__alca, .cat__icone {
+  width: var(--toque);
+  height: var(--toque);
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.cat__alca { color: var(--texto-apagado); cursor: grab; touch-action: none; }
+.cat--arrastando .cat__alca { cursor: grabbing; }
+.cat__icone { color: var(--texto-fraco); }
+.cat__texto { flex: 1; min-width: 0; }
+.cat__nome { font-size: 16px; font-weight: 600; }
+.cat__qtd { font-size: 12.5px; color: var(--texto-fraco); }
+.categorias__nova { margin-top: 14px; }
+
+/* Destino ao excluir categoria (7b). */
+.destinos { margin-top: 12px; max-height: 260px; overflow: auto; }
+.destino {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: var(--toque);
+  border-bottom: 1px solid var(--divisoria);
+  font-size: 15px;
+  font-weight: 600;
+}
+.destino input { width: 20px; height: 20px; accent-color: var(--magenta); margin: 0; }
+
+/* Produtos (6i) */
+.busca--produtos { padding-top: 0; }
+.chip--ativo { background: var(--magenta); border-color: var(--magenta); color: #fff; }
+.tela--produtos { padding-bottom: calc(var(--altura-abas) + env(safe-area-inset-bottom, 0px) + 84px); }
+.prod {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  min-height: 62px;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--divisoria);
+  background: transparent;
+  text-align: left;
+}
+.prod__texto { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.prod__nome { font-size: 16px; font-weight: 600; }
+.prod__cat { font-size: 12.5px; color: var(--texto-fraco); }
+.prod__seta { font-size: 22px; color: var(--texto-apagado); }
+.fab {
+  position: fixed;
+  right: max(var(--margem), calc((100vw - 480px) / 2 + var(--margem)));
+  bottom: calc(var(--altura-abas) + env(safe-area-inset-bottom, 0px) + 16px);
+  z-index: 12;
+  height: 52px;
+  padding: 0 20px;
+  border: 0;
+  border-radius: var(--raio-pilula);
+  background: var(--magenta);
+  color: #fff;
+  font-weight: 700;
+  font-size: 15px;
+  box-shadow: var(--sombra-flutuante);
+}

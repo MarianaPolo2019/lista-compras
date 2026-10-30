@@ -2,6 +2,8 @@
 // ui.js — formatação e pedacinhos de HTML usados por mais de uma tela
 // ============================================================================
 
+import { semInternet } from "./rede.js";
+
 /** Escapa texto que vem do banco antes de ir para dentro de um template. */
 export function esc(valor) {
   return String(valor ?? "")
@@ -172,6 +174,60 @@ export function abrirFolha({ alta = false, rotulo = "" } = {}) {
   const fechar = () => el.remove();
   el.querySelector("[data-fechar-folha]").addEventListener("click", fechar);
   return { el, corpo: el.querySelector(".folha__corpo"), fechar };
+}
+
+/**
+ * Ações que só funcionam com o servidor (finalizar compra, cadastros,
+ * observações, limite): sem internet, avisa "Precisa de internet" e devolve
+ * true para quem chamou desistir ANTES de tentar gravar. O botão continua à
+ * vista; só não finge que funcionou.
+ */
+export function precisaDeInternet(acao = "") {
+  if (!semInternet()) return false;
+  avisar(`Precisa de internet${acao ? ` para ${acao.charAt(0).toLowerCase()}${acao.slice(1)}` : ""}. Tente de novo quando o sinal voltar.`);
+  return true;
+}
+
+/**
+ * Linha de chips rolando para o lado (atalhos da Lista, filtros de Produtos).
+ * Dedo: rolagem nativa. Mouse: arrastar rola por pointer events; passou de
+ * 5 px, conta como arraste (o ponteiro fica capturado pela linha) e o clique
+ * que encerra o arraste é descartado. `aoTocar(evento)` recebe os toques de
+ * verdade.
+ */
+export function ligarArrasteHorizontal(trilho, aoTocar) {
+  let inicio = null;
+  let arrastou = false;
+  trilho.addEventListener("pointerdown", (e) => {
+    if (e.pointerType !== "mouse" || e.button !== 0) return;
+    inicio = { x: e.clientX, rolagem: trilho.scrollLeft, id: e.pointerId };
+    arrastou = false;
+  });
+  trilho.addEventListener("pointermove", (e) => {
+    if (!inicio) return;
+    const dx = e.clientX - inicio.x;
+    if (!arrastou && Math.abs(dx) > 5) {
+      arrastou = true;
+      trilho.classList.add("chips--arrastando");
+      try { trilho.setPointerCapture(inicio.id); } catch { /* sem captura, segue pelo trilho */ }
+    }
+    if (arrastou) trilho.scrollLeft = inicio.rolagem - dx;
+  });
+  const fim = () => {
+    inicio = null;
+    trilho.classList.remove("chips--arrastando");
+  };
+  trilho.addEventListener("pointerup", fim);
+  trilho.addEventListener("pointercancel", fim);
+  trilho.addEventListener("click", (e) => {
+    if (arrastou) {
+      e.preventDefault();
+      e.stopPropagation();
+      arrastou = false;
+      return;
+    }
+    aoTocar?.(e);
+  }, true);
 }
 
 /** 1 → "1 item", 3 → "3 itens". */

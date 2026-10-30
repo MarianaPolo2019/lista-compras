@@ -15,11 +15,14 @@
 // ============================================================================
 
 import { sb } from "./api.js";
+import { semInternet, aoMudarRede } from "./rede.js";
+import { plural } from "./ui.js";
 
 const estado = {
-  rede: navigator.onLine,
   inscrito: false,
   presentes: new Set(),   // user_id de quem está com o app aberto agora
+  pendentes: 0,           // alterações da Lista ainda não confirmadas pelo servidor (fila.js)
+  sincronizadoAte: 0,     // até quando mostrar "Sincronizado"
 };
 
 const ouvintesConexao = new Set();
@@ -33,8 +36,24 @@ let canal = null;
 let jaInscreveu = false;
 
 export function estaOnline() {
-  return estado.rede && estado.inscrito;
+  return !semInternet() && estado.inscrito;
 }
+
+/** fila.js informa quantas alterações faltam subir. */
+export function definirPendentes(n) {
+  if (n === estado.pendentes) return;
+  estado.pendentes = n;
+  avisarConexao();
+}
+
+/** A fila esvaziou depois de ficar presa sem rede: "Sincronizado" por 4 s. */
+export function marcarSincronizado() {
+  estado.sincronizadoAte = Date.now() + 4000;
+  avisarConexao();
+  setTimeout(avisarConexao, 4100);
+}
+
+aoMudarRede(() => avisarConexao());
 
 export function estaPresente(userId) {
   return estado.presentes.has(userId);
@@ -75,9 +94,6 @@ function lerPresenca() {
 
 /** Liga o canal para quem acabou de entrar. Chamar uma vez, depois do login. */
 export function iniciarConexao(userId) {
-  window.addEventListener("online", () => { estado.rede = true; avisarConexao(); });
-  window.addEventListener("offline", () => { estado.rede = false; avisarConexao(); });
-
   canal = sb.channel("mercado-lista", { config: { presence: { key: userId } } })
     .on("postgres_changes", { event: "*", schema: "mercado", table: "lista_itens" }, (payload) => {
       for (const fn of ouvintesLista) fn(payload);
@@ -102,8 +118,20 @@ export function iniciarConexao(userId) {
     });
 }
 
-/** HTML do selo, igual ao do design: ponto de 6px + "Online"/"Offline". */
+/**
+ * HTML do selo do cabeçalho (ponto de 6px + texto), nesta ordem de prioridade:
+ *   "Sincronizado" (verde)  — a fila acabou de esvaziar, confirmada item a item;
+ *   "Offline · 3 alterações pendentes" (âmbar) — sem conexão, com coisa a subir;
+ *   "Enviando 3 alterações…" (âmbar) — com conexão, a fila ainda subindo;
+ *   "Online" (verde) / "Offline" (âmbar).
+ */
 export function htmlSelo() {
   const on = estaOnline();
-  return `<span class="ponto${on ? " ponto--online" : ""}"></span>${on ? "Online" : "Offline"}`;
+  const n = estado.pendentes;
+  const verde = (t) => `<span class="ponto ponto--online"></span>${t}`;
+  const ambar = (t) => `<span class="ponto"></span>${t}`;
+  if (!n && Date.now() < estado.sincronizadoAte) return verde("Sincronizado");
+  if (n && !on) return ambar(`Offline · ${plural(n, "alteração pendente", "alterações pendentes")}`);
+  if (n) return ambar(`Enviando ${plural(n, "alteração", "alterações")}…`);
+  return on ? verde("Online") : ambar("Offline");
 }

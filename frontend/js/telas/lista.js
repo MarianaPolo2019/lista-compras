@@ -34,8 +34,9 @@
 // ============================================================================
 
 import { consultas, acoes } from "../api.js";
-import { esc, moeda, numero, plural, normalizar, htmlAvatar, avisar, dataCurta } from "../ui.js";
-import { htmlSelo, aoMudarLista, aoReconectar } from "../conexao.js";
+import { esc, moeda, numero, plural, normalizar, htmlAvatar, avisar, dataCurta, precisaDeInternet, ligarArrasteHorizontal } from "../ui.js";
+import { htmlSelo, aoMudarLista, aoReconectar, definirPendentes, marcarSincronizado } from "../conexao.js";
+import * as fila from "../fila.js";
 import { montarPrecos } from "../precos.js";
 import { escolherCorredor, nomeDeProduto } from "../escolhas.js";
 import { abrirFolhaProduto } from "./produto.js";
@@ -58,7 +59,6 @@ const st = {
   marcasAbertas: false,      // a lista do chip de marca está aberta
   digitandoMarca: false,     // "Outra marca…" virou campo de texto
   focarPreco: false,         // depois de desenhar, pôr o foco no preço da linha aberta
-  fila: new Map(),           // produto_id → { rodando, sujos:Set, temporizador }
   remotos: new Map(),        // produto_id → linha remota esperando para ser aplicada
   redesenhoPendente: false,
 };
@@ -77,12 +77,10 @@ export async function telaLista(ctx) {
   st.produtos = new Map(produtos.map((p) => [p.id, p]));
   montarHistorico(historico);
 
-  // Releitura completa: o banco manda, exceto nos produtos com gravação a
-  // caminho, que mantêm o que a tela mostra até a resposta chegar.
+  // Releitura completa: o banco (ou a última cópia dele, sem internet) manda,
+  // com as alterações da fila que ainda não subiram por cima.
   st.confirmado = new Map(itens.map((i) => [i.produto_id, i]));
-  const local = new Map(st.confirmado);
-  for (const [id, linha] of st.local) if (st.fila.get(id)?.rodando) local.set(id, linha);
-  st.local = local;
+  montarLocal();
   st.remotos.clear();
 
   if (!ctx.silencioso || !ctx.topo.querySelector(".segmento")) desenharTopo();
@@ -95,7 +93,47 @@ function ligarOuvintes() {
   if (ligado) return;
   ligado = true;
   aoMudarLista((payload) => { if (naLista()) aplicarRemoto(payload); });
-  aoReconectar(() => { if (naLista()) st.ctx.redesenhar(); });
+  // Voltou o Realtime: primeiro sobe a fila, depois relê (a releitura também
+  // acontece sozinha quando a fila esvazia, em "sincronizado").
+  aoReconectar(() => {
+    fila.sincronizar();
+    if (naLista()) st.ctx.redesenhar();
+  });
+
+  // --- a fila conta o que acontece com cada alteração ----------------------
+  fila.ao("mudou", () => {
+    definirPendentes(fila.quantasPendentes());
+    if (naLista()) desenharTudo();
+  });
+  fila.ao("confirmado", (id, linha) => {
+    st.confirmado.set(id, linha);
+    // A tela continua mostrando o que ainda está na fila por cima do banco.
+    if (!st.remotos.has(id)) montarLocal([id]);
+  });
+  fila.ao("recusado", (id, erro, doServidor) => {
+    if (doServidor) st.confirmado.set(id, doServidor);
+    else st.confirmado.delete(id);
+    montarLocal([id]);
+    st.remotos.delete(id);
+    const nome = st.produtos.get(id)?.nome ?? "Um produto";
+    avisar(`${nome} não foi salvo: ${erro.message}`);
+    if (naLista()) forcarRedesenho();
+  });
+  fila.ao("sincronizado", async () => {
+    // Fila vazia e confirmada: relê lista_itens do servidor, e a tela passa a
+    // mostrar o que ficou no banco (inclusive o que o Carlos mudou nesse meio).
+    try {
+      const itens = await consultas.itensDaLista();
+      st.confirmado = new Map(itens.map((i) => [i.produto_id, i]));
+      montarLocal();
+      st.remotos.clear();
+      marcarSincronizado();
+      if (naLista()) desenharTudo();
+    } catch (e) {
+      console.error(e);
+    }
+  });
+
   document.addEventListener("visibilitychange", async () => {
     if (document.visibilityState !== "visible" || !naLista()) return;
     try {
@@ -128,6 +166,20 @@ function naLista() {
 // ---------------------------------------------------------------------------
 function item(id) {
   return st.local.get(id) ?? VAZIO;
+}
+
+/** `local` = o que o banco tem + as alterações da fila por cima. `ids` limita a alguns produtos. */
+function montarLocal(ids = null) {
+  if (!ids) {
+    st.local = new Map(fila.comPendentes([...st.confirmado.values()]).map((i) => [i.produto_id, i]));
+    return;
+  }
+  for (const id of ids) {
+    const base = st.confirmado.has(id) ? [st.confirmado.get(id)] : [];
+    const linha = fila.comPendentes(base).find((l) => l.produto_id === id);
+    if (linha) st.local.set(id, linha);
+    else st.local.delete(id);
+  }
 }
 
 /** A regra de "última" e "mesma marca" é a de precos.js, igual em todas as telas. */
@@ -331,39 +383,10 @@ function desenharAtalhos() {
 }
 
 function ligarArrasteDosAtalhos(chips) {
-  let inicio = null;
-  let arrastou = false;
-
-  chips.addEventListener("pointerdown", (e) => {
-    if (e.pointerType !== "mouse" || e.button !== 0) return;
-    inicio = { x: e.clientX, rolagem: chips.scrollLeft };
-    arrastou = false;
-  });
-  window.addEventListener("pointermove", (e) => {
-    if (!inicio) return;
-    const dx = e.clientX - inicio.x;
-    if (Math.abs(dx) > 5) {
-      arrastou = true;
-      chips.classList.add("chips--arrastando");
-    }
-    if (arrastou) chips.scrollLeft = inicio.rolagem - dx;
-  });
-  window.addEventListener("pointerup", () => {
-    inicio = null;
-    chips.classList.remove("chips--arrastando");
-  });
-
-  // Fase de captura: o clique que encerra um arraste morre aqui.
-  chips.addEventListener("click", (e) => {
-    if (arrastou) {
-      e.preventDefault();
-      e.stopPropagation();
-      arrastou = false;
-      return;
-    }
+  ligarArrasteHorizontal(chips, (e) => {
     const chip = e.target.closest("[data-ir]");
     if (chip) irParaSecao(chip.dataset.ir);
-  }, true);
+  });
 }
 
 /** Rola até a seção descontando a altura REAL do topo fixo naquele momento. */
@@ -496,7 +519,7 @@ function htmlLinha(p, comMais) {
           <span class="linha__marcador"></span>
         </button>
         <button type="button" class="linha__texto" data-acao="abrir" aria-expanded="${aberta}">
-          <span class="linha__nome">${esc(p.nome)}</span>
+          <span class="linha__nome">${esc(p.nome)}${htmlPendente(p.id)}</span>
           <span class="linha__sub">${esc(subLinha(p))}</span>
         </button>
         ${comMais && !aberta ? `<button type="button" class="linha__mais" data-acao="mais" aria-label="Somar 1 em ${esc(p.nome)}">+</button>` : ""}
@@ -518,7 +541,7 @@ function htmlLinhaCarrinho(p) {
           <span class="carrinho__check" aria-hidden="true">✓</span>
         </button>
         <button type="button" class="carrinho__texto" data-acao="abrir" aria-expanded="${aberta}">
-          <span class="carrinho__nome">${esc(p.nome)}</span>
+          <span class="carrinho__nome"><span class="carrinho__riscado">${esc(p.nome)}</span>${htmlPendente(p.id)}</span>
           <span class="carrinho__sub" data-sub-carrinho>${htmlSubCarrinho(p.id, marca)}</span>
         </button>
         <span class="carrinho__total${temPreco ? "" : " carrinho__total--sem"}" data-total-linha>${htmlTotalLinha(p.id)}</span>
@@ -823,69 +846,26 @@ function precoComMarca(id, valor) {
 }
 
 // ---------------------------------------------------------------------------
-// Gravação otimista em fila
+// Gravação: tudo passa pela fila (fila.js), com ou sem internet
 // ---------------------------------------------------------------------------
-function filaDe(id) {
-  if (!st.fila.has(id)) st.fila.set(id, { rodando: false, sujos: new Set(), temporizador: null, agendada: false });
-  return st.fila.get(id);
-}
 
-/** Muda a tela já e agenda a gravação dos campos alterados. */
+/**
+ * Muda a tela já e põe os campos na fila do produto. A fila guarda no
+ * aparelho, envia quando der e conta o resultado (ouvintes em ligarOuvintes):
+ * confirmado, recusado pelo servidor (a linha volta ao banco e há aviso) ou
+ * preso por falta de rede (a linha fica com o relógio de "pendente").
+ */
 function mudar(id, campos, { atraso = 0 } = {}) {
   st.local.set(id, { ...item(id), produto_id: id, ...campos });
-  const f = filaDe(id);
-  for (const k of Object.keys(campos)) f.sujos.add(k);
-  clearTimeout(f.temporizador);
-  f.agendada = true;
-  if (atraso) f.temporizador = setTimeout(() => gravarJa(id), atraso);
-  else gravarJa(id);
+  fila.enfileirar(id, campos, st.confirmado.has(id), { atraso });
 }
 
-async function gravarJa(id) {
-  const f = filaDe(id);
-  clearTimeout(f.temporizador);
-  if (f.rodando) return;          // a volta em curso pega os campos novos
-  if (!f.sujos.size) { f.agendada = false; return; }
-  f.rodando = true;
-  try {
-    while (f.sujos.size) {
-      const campos = {};
-      for (const k of f.sujos) campos[k] = item(id)[k];
-      f.sujos.clear();
-      const linha = await acoes.gravarItem(id, campos, st.confirmado.has(id));
-      st.confirmado.set(id, linha);
-      // O que foi mudado DEPOIS de esta gravação sair continua valendo na tela.
-      const atual = { ...linha };
-      for (const k of f.sujos) atual[k] = item(id)[k];
-      st.local.set(id, atual);
-    }
-  } catch (e) {
-    console.error(e);
-    // Falhou: o produto volta ao que o banco tem, inteiro, e a pessoa fica
-    // sabendo. Uma mudança remota que esperava já está dentro do confirmado.
-    f.sujos.clear();
-    clearTimeout(f.temporizador);
-    f.agendada = false;
-    st.remotos.delete(id);
-    if (st.confirmado.has(id)) st.local.set(id, st.confirmado.get(id));
-    else st.local.delete(id);
-    const rede = /conexão|internet|fetch/i.test(e.message ?? "");
-    avisar(rede ? "Não foi possível salvar. Verifique a conexão." : `Não foi possível salvar: ${e.message}`);
-    f.rodando = false;
-    forcarRedesenho();
-    return;
-  }
-  f.rodando = false;
-  // Os campos sujos foram todos gravados na volta acima; um preço que ainda
-  // espera o atraso de 600 ms volta a marcar `agendada` em `mudar`.
-  clearTimeout(f.temporizador);
-  f.agendada = false;
-  // Uma mudança remota que esperou por esta gravação entra agora.
-  if (st.remotos.has(id) && !campoEmEdicao()) aplicarPendentes();
-  else desenharTudo();
+/** Ao sair do campo de preço: envia sem esperar o atraso. */
+function gravarJa() {
+  fila.enviarJa();
 }
 
-/** Depois de uma falha a tela PRECISA voltar ao banco, mesmo com campo em foco. */
+/** Depois de uma recusa a tela PRECISA voltar ao banco, mesmo com campo em foco. */
 function forcarRedesenho() {
   campoEmEdicao()?.blur();
   st.redesenhoPendente = false;
@@ -904,14 +884,15 @@ function aplicarRemoto({ eventType, new: novo, old }) {
   if (linha) st.confirmado.set(id, linha);
   else st.confirmado.delete(id);
 
-  const f = st.fila.get(id);
-  const ocupado = f?.rodando || f?.agendada || campoEmEdicao()?.closest(`[data-produto="${CSS.escape(id)}"]`);
+  // Produto com alteração na fila ou com campo em edição: a mudança remota
+  // espera (a alteração local ainda vai chegar ao servidor e, chegando por
+  // último, é ela que vale). O que está no banco aparece quando a fila esvazia.
+  const ocupado = fila.temPendente(id) || campoEmEdicao()?.closest(`[data-produto="${CSS.escape(id)}"]`);
   if (ocupado) {
     st.remotos.set(id, linha);
     return;
   }
-  if (linha) st.local.set(id, linha);
-  else st.local.delete(id);
+  montarLocal([id]);
   desenharTudo();
 }
 
@@ -923,11 +904,9 @@ function pick(l) {
 }
 
 function aplicarPendentes() {
-  for (const [id, linha] of st.remotos) {
-    const f = st.fila.get(id);
-    if (f?.rodando || f?.agendada) continue;
-    if (linha) st.local.set(id, linha);
-    else st.local.delete(id);
+  for (const id of [...st.remotos.keys()]) {
+    if (fila.temPendente(id)) continue;
+    montarLocal([id]);
     st.remotos.delete(id);
   }
   desenharTudo();
@@ -936,7 +915,14 @@ function aplicarPendentes() {
 // ---------------------------------------------------------------------------
 // Produto novo pela busca (6b → escolha de corredor)
 // ---------------------------------------------------------------------------
+/** Relógio discreto ao lado do nome: a alteração deste produto ainda não subiu. */
+function htmlPendente(id) {
+  if (!fila.temPendente(id)) return "";
+  return `<svg class="pendente" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="alteração ainda não enviada"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>`;
+}
+
 async function abrirFolhaCategoria(texto) {
+  if (precisaDeInternet("Cadastrar produto")) return;
   const nome = nomeDeProduto(texto);
   if (!nome) return;
   const categoria = await escolherCorredor(`Adicionar “${nome}”`, st.categorias);

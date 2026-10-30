@@ -9,17 +9,40 @@
 // O esquema `mercado` só responde depois de entrar na lista de "Exposed
 // schemas" da Data API do Supabase. Enquanto não entrar, toda leitura falha com
 // PGRST106, e a tela mostra isso com todas as letras (ver `traduzir`).
+//
+// SEM INTERNET: as leituras que a Lista e o Orçamento usam guardam a última
+// resposta bem-sucedida no aparelho (local.js). Se o servidor não responde por
+// REDE, volta essa cópia; se o servidor responde com erro, o erro sobe. Toda
+// falha de rede é avisada a rede.js, e todo sucesso desfaz o aviso.
+//
+// A versão do supabase-js é FIXA na URL (2.118.0, não "@2"): o service worker
+// guarda esses arquivos para o app abrir sem internet, e uma URL que muda de
+// conteúdo sozinha deixaria o cache com uma versão e a rede com outra.
+// Trocar de versão = mudar aqui E no sw.js (SUPABASE_JS), juntos.
 // ============================================================================
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.118.0";
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./config.js";
+import { registrarFalhaDeRede, registrarSucessoDeRede, ehErroDeRede } from "./rede.js";
+import * as local from "./local.js";
 
 export const sb = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
-  db: { schema: "mercado" },
+  // retry: false — sem isto, cada leitura que falha por rede é repetida pela
+  // biblioteca com espera crescente (~7 s por consulta), e o app sem internet
+  // levava 14 s para abrir. A recuperação fica com o app: cópia no aparelho,
+  // nova leitura quando a rede volta, quando o Realtime reconecta e a cada 15 s.
+  db: { schema: "mercado", retry: false },
   auth: { persistSession: true, autoRefreshToken: true },
 });
 
-export class ErroApi extends Error {}
+/** `rede = true`: o servidor não respondeu (sem internet), não é uma recusa. */
+export class ErroApi extends Error {
+  constructor(mensagem, { rede = false, codigo = null } = {}) {
+    super(mensagem);
+    this.rede = rede;
+    this.codigo = codigo;
+  }
+}
 
 /** As colunas de lista_itens que o app lê e grava (sem atualizado_por/updated_at). */
 const COLUNAS_ITEM = "produto_id, quantidade, no_carrinho, marca, preco_unitario, marcado_por";
@@ -49,9 +72,33 @@ function traduzir(error) {
   return bruto || "Não consegui completar a operação.";
 }
 
+function erroDe(error) {
+  const rede = ehErroDeRede(error);
+  if (rede) registrarFalhaDeRede();
+  return new ErroApi(traduzir(error), { rede, codigo: error?.code ?? null });
+}
+
 function conferir({ data, error, count }) {
-  if (error) throw new ErroApi(traduzir(error));
+  if (error) throw erroDe(error);
+  registrarSucessoDeRede();
   return count !== undefined && count !== null && data === null ? count : data;
+}
+
+/**
+ * Leitura com cópia no aparelho: servidor respondeu → guarda e devolve;
+ * falhou por rede e há cópia → devolve a cópia; qualquer outro caso → erro.
+ */
+async function comCache(chave, buscar) {
+  try {
+    const valor = await buscar();
+    local.guardar(chave, valor).catch(() => {});
+    return valor;
+  } catch (e) {
+    if (!e.rede) throw e;
+    const guardado = await local.ler(chave).catch(() => undefined);
+    if (guardado === undefined) throw e;
+    return guardado.valor;
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -60,14 +107,20 @@ function conferir({ data, error, count }) {
 export const auth = {
   async sessao() {
     const { data, error } = await sb.auth.getSession();
-    if (error) throw new ErroApi(traduzir(error));
+    if (error) throw erroDe(error);
     return data?.session ?? null;
   },
   async entrar(email, senha) {
     return conferir(await sb.auth.signInWithPassword({ email, password: senha }));
   },
+  /**
+   * Sai. Sem internet o servidor não responde e o signOut normal devolve erro
+   * SEM apagar a sessão do aparelho; aí apaga só a local (scope "local"), para
+   * "Sair" sempre levar ao Login.
+   */
   async sair() {
-    await sb.auth.signOut();
+    const { error } = await sb.auth.signOut();
+    if (error) await sb.auth.signOut({ scope: "local" });
   },
   aoMudar(callback) {
     return sb.auth.onAuthStateChange((evento, sessao) => callback(evento, sessao));
@@ -91,20 +144,33 @@ export const auth = {
 export const consultas = {
   /** Os dois do casal, na ordem em que foram cadastrados. */
   async membros() {
-    return conferir(await sb.schema("public").from("membros_casal")
-      .select("user_id, nome, created_at").order("created_at")) ?? [];
+    return comCache("membros", async () => conferir(await sb.schema("public").from("membros_casal")
+      .select("user_id, nome, created_at").order("created_at")) ?? []);
   },
 
   async categorias() {
-    return conferir(await sb.from("categorias").select("id, nome, ordem").order("ordem")) ?? [];
+    return comCache("categorias", async () =>
+      conferir(await sb.from("categorias").select("id, nome, ordem").order("ordem")) ?? []);
   },
 
   /** Todos, ativos e desativados: um item desativado ainda pode estar no carrinho. */
   async produtos() {
-    return conferir(await sb.from("produtos").select("id, nome, categoria_id, ativo").order("nome")) ?? [];
+    return comCache("produtos", async () =>
+      conferir(await sb.from("produtos").select("id, nome, categoria_id, ativo").order("nome")) ?? []);
   },
 
+  /**
+   * lista_itens como o SERVIDOR tem (ou a última cópia, sem internet). As
+   * alterações da fila que ainda não subiram não estão aqui: quem mostra a
+   * lista junta as duas coisas (fila.comPendentes).
+   */
   async itensDaLista() {
+    return comCache("lista_itens", async () =>
+      conferir(await sb.from("lista_itens").select(COLUNAS_ITEM)) ?? []);
+  },
+
+  /** Sempre do servidor, nunca da cópia: é para conferir o estado real agora. */
+  async itensDaListaDoServidor() {
     return conferir(await sb.from("lista_itens").select(COLUNAS_ITEM)) ?? [];
   },
 
@@ -115,28 +181,30 @@ export const consultas = {
    * daria "última" errada sem ninguém perceber.
    */
   async historicoDePrecos() {
-    const PAGINA = 1000;
-    const linhas = [];
-    for (let de = 0; ; de += PAGINA) {
-      const parte = conferir(await sb.from("compra_itens")
-        .select("produto_id, compra_id, marca, quantidade, preco_unitario, compras!inner(data, created_at)")
-        .order("id")
-        .range(de, de + PAGINA - 1)) ?? [];
-      linhas.push(...parte);
-      if (parte.length < PAGINA) return linhas;
-    }
+    return comCache("historico", async () => {
+      const PAGINA = 1000;
+      const linhas = [];
+      for (let de = 0; ; de += PAGINA) {
+        const parte = conferir(await sb.from("compra_itens")
+          .select("produto_id, compra_id, marca, quantidade, preco_unitario, compras!inner(data, created_at)")
+          .order("id")
+          .range(de, de + PAGINA - 1)) ?? [];
+        linhas.push(...parte);
+        if (parte.length < PAGINA) return linhas;
+      }
+    });
   },
 
   async configuracoes() {
-    return conferir(await sb.from("configuracoes")
-      .select("limite_gastos, manter_tela_acesa").eq("id", 1).maybeSingle());
+    return comCache("configuracoes", async () => conferir(await sb.from("configuracoes")
+      .select("limite_gastos, manter_tela_acesa").eq("id", 1).maybeSingle()));
   },
 
   /** Observações ainda não resolvidas, a mais recente primeiro. */
   async observacoesAbertas() {
-    return conferir(await sb.from("observacoes")
+    return comCache("observacoes", async () => conferir(await sb.from("observacoes")
       .select("id, texto, produto_id, created_at").eq("resolvida", false)
-      .order("created_at", { ascending: false })) ?? [];
+      .order("created_at", { ascending: false })) ?? []);
   },
 
   /** Uma linha de lista_itens, lida na hora (para somar 1 sem usar valor velho). */
@@ -206,6 +274,44 @@ export const acoes = {
     return conferir(await sb.from("lista_itens")
       .upsert({ produto_id: produtoId, ...campos }, { onConflict: "produto_id" })
       .select(COLUNAS_ITEM).single());
+  },
+
+  // --- Categorias (Ajustes) --------------------------------------------------
+  async criarCategoria(nome, ordem) {
+    return conferir(await sb.from("categorias").insert({ nome, ordem }).select("id, nome, ordem").single());
+  },
+
+  async renomearCategoria(id, nome) {
+    const linha = conferir(await sb.from("categorias").update({ nome }).eq("id", id).select("id, nome, ordem").maybeSingle());
+    if (!linha) throw new ErroApi("Não encontrei a categoria para gravar.");
+    return linha;
+  },
+
+  async ordemDaCategoria(id, ordem) {
+    const linha = conferir(await sb.from("categorias").update({ ordem }).eq("id", id).select("id, ordem").maybeSingle());
+    if (!linha) throw new ErroApi("Não encontrei a categoria para gravar.");
+    return linha;
+  },
+
+  /**
+   * Move TODOS os produtos (ativos e inativos) de uma categoria para outra,
+   * num comando só (o banco aplica tudo ou nada). Devolve os ids movidos, para
+   * quem chamou poder desfazer se o passo seguinte falhar.
+   */
+  async moverProdutosDeCategoria(de, para) {
+    const linhas = conferir(await sb.from("produtos").update({ categoria_id: para }).eq("categoria_id", de).select("id")) ?? [];
+    return linhas.map((l) => l.id);
+  },
+
+  /** Volta produtos específicos para uma categoria (desfazer de moverProdutosDeCategoria). */
+  async devolverProdutos(ids, para) {
+    if (!ids.length) return;
+    conferir(await sb.from("produtos").update({ categoria_id: para }).in("id", ids));
+  },
+
+  async apagarCategoria(id) {
+    const linhas = conferir(await sb.from("categorias").delete().eq("id", id).select("id")) ?? [];
+    if (!linhas.length) throw new ErroApi("A categoria não foi apagada (nenhuma linha removida).");
   },
 
   /** Cadastra um produto novo e devolve a linha criada. */

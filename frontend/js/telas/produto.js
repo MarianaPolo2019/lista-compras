@@ -23,9 +23,10 @@
 // ============================================================================
 
 import { consultas, acoes } from "../api.js";
-import { esc, moeda, numero, dataBR, dataCurta, mesCurto, avisar, abrirFolha, abrirDialogo } from "../ui.js";
+import { esc, moeda, numero, dataBR, dataCurta, mesCurto, avisar, abrirFolha, abrirDialogo, precisaDeInternet } from "../ui.js";
 import { montarPrecos, anteriorMesmaMarca, anteriorQualquer, variacao } from "../precos.js";
 import { escolherCorredor } from "../escolhas.js";
+import * as fila from "../fila.js";
 
 /**
  * Abre a folha do produto. `aoMudar()` é chamado depois de qualquer gravação
@@ -188,6 +189,9 @@ export async function abrirFolhaProduto(produtoId, { aoMudar = () => {} } = {}) 
 
   async function excluir() {
     const p = estado.produto;
+    // Uma alteração dele ainda na fila recriaria a linha na lista depois da
+    // exclusão: primeiro ela sobe, depois exclui.
+    if (fila.temPendente(produtoId)) return mostrarErro("Este produto tem alteração da lista ainda subindo. Espere o “Sincronizado” e tente de novo.");
     // Lido na hora: o carrinho pode ter mudado no outro celular.
     let item;
     try {
@@ -230,13 +234,14 @@ export async function abrirFolhaProduto(produtoId, { aoMudar = () => {} } = {}) 
   folha.el.addEventListener("click", (e) => {
     const alvo = e.target.closest("[data-acao]");
     if (!alvo) return;
+    // Cadastro só com internet: o botão fica à vista e avisa, sem tentar gravar.
     ({
       fechar: () => folha.fechar(),
-      editar: () => { estado.editando = true; desenhar(); },
-      "salvar-nome": salvarNome,
+      editar: () => precisaDeInternet("Editar o produto") || (estado.editando = true, desenhar()),
+      "salvar-nome": () => precisaDeInternet("Editar o produto") || salvarNome(),
       "cancelar-nome": () => { estado.editando = false; desenhar(); },
-      categoria: mudarCategoria,
-      excluir,
+      categoria: () => precisaDeInternet("Mudar a categoria") || mudarCategoria(),
+      excluir: () => precisaDeInternet("Excluir o produto") || excluir(),
     })[alvo.dataset.acao]?.();
   });
 

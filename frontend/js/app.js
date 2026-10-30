@@ -10,12 +10,21 @@
 //      com sessão, mas a conferência falhou (rede, API) → erro com "Tentar de
 //      novo"; falha de conferência NUNCA vira "acesso não liberado" nem lista
 //   3. membro do casal                    → as quatro abas
+//
+// SEM INTERNET (depois de ter entrado uma vez com internet neste aparelho):
+//   - a renovação do login falha por rede, mas isso NÃO manda para o Login:
+//     o app usa a sessão guardada e a última confirmação de "membro do casal"
+//     guardada no aparelho (ACESSO_SALVO);
+//   - o Login só aparece se a pessoa tocar em Sair, ou se o servidor, COM
+//     internet, disser que a sessão não vale mais (evento SIGNED_OUT).
 // ============================================================================
 
 import { configurado } from "./config.js";
 import { auth, consultas } from "./api.js";
-import { esc, htmlErro } from "./ui.js";
-import { iniciarConexao, aoMudarConexao, aoMudarLista, htmlSelo } from "./conexao.js";
+import { esc, htmlErro, avisar, plural } from "./ui.js";
+import { iniciarConexao, aoMudarConexao, aoMudarLista, htmlSelo, definirPendentes } from "./conexao.js";
+import { semInternet } from "./rede.js";
+import * as fila from "./fila.js";
 import { aplicarTelaAcesa, definirNaLista } from "./tela-acesa.js";
 
 import { telaLogin } from "./telas/login.js";
@@ -120,7 +129,31 @@ function modoApp() {
   el.abas.classList.remove("oculto");
 }
 
-async function sair() {
+// A última confirmação de acesso (quem entrou, a linha em membros_casal e os
+// dois do casal), para abrir sem internet. Apagada ao Sair.
+const ACESSO_SALVO = "minhas-compras.acesso";
+function lerAcesso() {
+  try { return JSON.parse(localStorage.getItem(ACESSO_SALVO) ?? "null"); } catch { return null; }
+}
+function guardarAcesso(valor) {
+  try { localStorage.setItem(ACESSO_SALVO, JSON.stringify(valor)); } catch { /* sem armazenamento: só não abre offline */ }
+}
+function esquecerAcesso() {
+  try { localStorage.removeItem(ACESSO_SALVO); } catch { /* nada a fazer */ }
+}
+
+/**
+ * Sair. Com alterações da Lista ainda na fila, NÃO sai: sair descartaria o que
+ * não subiu sem ninguém saber. Pede para esperar o "Sincronizado".
+ */
+async function sair(botao) {
+  const n = fila.quantasPendentes();
+  if (n) {
+    avisar(`Há ${plural(n, "alteração", "alterações")} da lista ainda não enviada${n === 1 ? "" : "s"}. Espere o “Sincronizado” antes de sair.`);
+    if (botao) botao.disabled = false;
+    return;
+  }
+  esquecerAcesso();
   await auth.sair();
   location.hash = "";
   location.reload();
@@ -129,6 +162,9 @@ async function sair() {
 /** Liga Realtime, presença e "manter tela acesa" para um membro confirmado. */
 function ligarAoVivo() {
   iniciarConexao(estado.usuario.id);
+  // O que sobrou na fila de uma sessão anterior sobe assim que der.
+  definirPendentes(fila.quantasPendentes());
+  fila.sincronizar();
 
   aoMudarConexao(() => {
     for (const selo of document.querySelectorAll("[data-selo]")) selo.innerHTML = htmlSelo();
@@ -164,7 +200,7 @@ async function iniciar() {
     }
     if (alvo.dataset.acao === "sair") {
       alvo.disabled = true;
-      sair();
+      sair(alvo);
     }
   });
 
@@ -177,43 +213,69 @@ async function iniciar() {
     return;
   }
 
-  let sessao;
+  // A fila de alterações guardada no aparelho entra antes de qualquer tela.
+  await fila.carregarFila().catch((e) => console.error("Fila do aparelho indisponível", e));
+
+  const salvo = lerAcesso();
+  let sessao = null, erroSessao = null;
   try {
     sessao = await auth.sessao();
   } catch (e) {
-    modoCheio();
-    el.tela.innerHTML = htmlErro("Não consegui abrir o app", e);
-    return;
+    erroSessao = e;
   }
 
   if (!sessao?.user) {
+    // Sem sessão válida porque a renovação falhou por REDE, e com acesso
+    // confirmado antes neste aparelho: entra com o que está guardado.
+    const porRede = erroSessao?.rede || (!erroSessao && semInternet());
+    if (porRede && salvo?.usuario) {
+      entrarComAcesso(salvo);
+      return finalizarEntrada();
+    }
     modoCheio();
-    await telaLogin(el.tela);
+    if (erroSessao) el.tela.innerHTML = htmlErro("Não consegui abrir o app", erroSessao);
+    else await telaLogin(el.tela);
     return;
   }
-
-  estado.usuario = sessao.user;
 
   let membro;
   try {
     membro = await auth.ehMembro(sessao.user.id);
   } catch (e) {
+    // Sem internet, vale a última confirmação deste mesmo usuário.
+    if (e.rede && salvo?.usuario?.id === sessao.user.id && salvo.membro) {
+      entrarComAcesso(salvo);
+      return finalizarEntrada();
+    }
     modoCheio();
     telaFalhaNaConferencia(el.tela, e);
     return;
   }
 
   if (!membro) {
+    esquecerAcesso();
     modoCheio();
     telaAcessoNegado(el.tela, sessao.user.email);
     return;
   }
 
-  estado.membro = membro;
   // Os dois do casal: nome e cor de quem marcou cada item do carrinho, e a
   // lista do Compartilhamento. Se falhar, segue só com quem entrou; os itens
   // marcados pelo outro aparecem sem o avatar, nunca com o avatar errado.
-  estado.membros = await consultas.membros().catch(() => [membro]);
+  const membros = await consultas.membros().catch(() => [membro]);
+  const acesso = { usuario: { id: sessao.user.id, email: sessao.user.email }, membro, membros };
+  guardarAcesso(acesso);
+  entrarComAcesso(acesso);
+  await finalizarEntrada();
+}
+
+function entrarComAcesso(acesso) {
+  estado.usuario = acesso.usuario;
+  estado.membro = acesso.membro;
+  estado.membros = acesso.membros?.length ? acesso.membros : [acesso.membro];
+}
+
+async function finalizarEntrada() {
 
   modoApp();
   ligarAoVivo();
@@ -221,9 +283,13 @@ async function iniciar() {
   if (!location.hash) fixarRota("lista");
   await desenhar();
 
-  // Saiu em outra aba: esta acompanha.
+  // Saiu em outra aba, ou o servidor (com internet) disse que a sessão não
+  // vale mais: esquece o acesso guardado e volta para o Login.
   auth.aoMudar((evento) => {
-    if (evento === "SIGNED_OUT") location.reload();
+    if (evento === "SIGNED_OUT") {
+      esquecerAcesso();
+      location.reload();
+    }
   });
 }
 

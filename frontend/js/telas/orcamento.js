@@ -32,6 +32,8 @@ import {
 import { montarPrecos } from "../precos.js";
 import { escolherProduto } from "../escolhas.js";
 import { definirFiltroDaLista } from "./lista.js";
+import { precisaDeInternet } from "../ui.js";
+import * as fila from "../fila.js";
 
 const ATRASO_LIMITE = 600;
 
@@ -64,22 +66,27 @@ export async function telaOrcamento(ctx) {
     return;
   }
 
-  const [produtos, itens, config, observacoes, linhas, categorias] = await Promise.all([
+  const [produtos, itensDoServidor, config, observacoes, linhas, categorias] = await Promise.all([
     consultas.produtos(), consultas.itensDaLista(), consultas.configuracoes(),
     consultas.observacoesAbertas(), consultas.historicoDePrecos(), consultas.categorias(),
   ]);
-  // A comparação vem à parte: se ela falhar, o resto da tela continua certo e
-  // o cartão dela diz que falhou.
-  let comparacao = null, erroComparacao = null;
+  // As contas são feitas sobre o que a Lista mostra: o banco (ou a cópia dele)
+  // com as alterações da fila que ainda não subiram por cima.
+  const itens = fila.comPendentes(itensDoServidor);
+  // A comparação vem à parte e é feita PELO SERVIDOR: sem internet não há
+  // número, e o cartão diz "Disponível com internet" em vez de um valor velho.
+  let comparacao = null, erroComparacao = null, comparacaoOffline = false;
   try {
     comparacao = await consultas.compararMesmosItens();
   } catch (e) {
-    erroComparacao = e.message;
+    if (e.rede) comparacaoOffline = true;
+    else erroComparacao = e.message;
   }
   if (!ctx.vivo()) return;
 
   st.ctx = ctx;
   st.dados = calcular({ produtos, itens, config, observacoes, linhas, categorias, comparacao, erroComparacao });
+  st.dados.comparacaoOffline = comparacaoOffline;
   st.limiteConfirmado = st.dados.limite;
   desenhar();
 }
@@ -128,7 +135,7 @@ function desenhar() {
   ctx.cabecalho.innerHTML = `
     <div>
       <h1 class="cabecalho__titulo">Orçamento</h1>
-      <div class="cabecalho__sub">${d.comprados} comprados · ${d.pendentes} pendentes</div>
+      <div class="cabecalho__sub">${plural(d.comprados, "comprado", "comprados")} · ${plural(d.pendentes, "pendente", "pendentes")}</div>
     </div>`;
 
   ctx.tela.className = "tela";
@@ -172,7 +179,7 @@ function desenhar() {
     <div class="secao secao--bloco secao--resumo"><span class="secao__titulo">Observações</span></div>
     <form class="obs-nova" data-obs-form>
       <input class="campo__entrada obs-nova__entrada" data-obs-texto type="text" maxlength="200"
-             placeholder="Ex.: catchup acabou na 2ª semana" aria-label="Nova observação" autocomplete="off" enterkeyhint="done">
+             placeholder="Ex.: acabou o catchup" aria-label="Nova observação" autocomplete="off" enterkeyhint="done">
       <button type="submit" class="botao obs-nova__botao">+ Anotar</button>
     </form>
     ${d.observacoes.map((o) => `
@@ -232,6 +239,10 @@ function htmlSaldo(limite) {
 }
 
 function htmlMesmosItens(d) {
+  if (d.comparacaoOffline) {
+    return `<div class="cartao-info__rotulo">Mesmos itens na compra anterior</div>
+            <div class="cartao-info__nota">Disponível com internet.</div>`;
+  }
   if (d.erroComparacao) {
     return `<div class="cartao-info__rotulo">Mesmos itens na compra anterior</div>
             <div class="cartao-info__nota cartao-info__nota--aviso">Não consegui comparar: ${esc(d.erroComparacao)}</div>`;
@@ -305,6 +316,11 @@ function ligar() {
     st.temporizador = setTimeout(gravar, ATRASO_LIMITE);
   });
   campo.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); campo.blur(); } });
+  // O limite é gravado direto no servidor (não entra na fila da Lista): sem
+  // internet, o campo nem recebe o foco, e o aviso diz por quê.
+  campo.addEventListener("focus", () => {
+    if (precisaDeInternet("Mudar o limite de gastos")) campo.blur();
+  });
   campo.addEventListener("blur", async () => {
     await gravar();
     // Ao sair, o campo mostra o que o banco tem, já formatado ("100,00").
@@ -318,6 +334,7 @@ function ligar() {
   const form = tela.querySelector("[data-obs-form]");
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
+    if (precisaDeInternet("Anotar uma observação")) return;
     const entrada = form.querySelector("[data-obs-texto]");
     const texto = entrada.value.replace(/\s+/g, " ").trim();
     if (!texto) return;
@@ -344,9 +361,9 @@ function ligar() {
     if (!alvo) return;
     const obs = st.dados.observacoes.find((o) => o.id === alvo.closest("[data-obs]")?.dataset.obs);
     ({
-      "obs-lista": () => adicionarObservacaoNaLista(obs),
-      "obs-apagar": () => apagarObservacao(obs),
-      reiniciar: reiniciarLista,
+      "obs-lista": () => precisaDeInternet("Pôr a observação na lista") || adicionarObservacaoNaLista(obs),
+      "obs-apagar": () => precisaDeInternet("Apagar uma observação") || apagarObservacao(obs),
+      reiniciar: () => precisaDeInternet("Salvar a compra") || reiniciarLista(),
     })[alvo.dataset.acao]?.();
   });
 }
@@ -400,10 +417,18 @@ function apagarObservacao(obs) {
 
 /** "Reiniciar lista": confere o carrinho (lido agora) e só então oferece salvar. */
 async function reiniciarLista() {
+  // Com alterações da Lista ainda na fila, o carrinho do servidor não é o que
+  // a tela mostra: salvar agora gravaria uma compra diferente da que se vê.
+  const pendentes = fila.quantasPendentes();
+  if (pendentes) {
+    avisar(`Ainda ${pendentes === 1 ? "há 1 alteração" : `há ${pendentes} alterações`} da lista subindo. Espere o “Sincronizado” e tente de novo.`);
+    fila.sincronizar();
+    return;
+  }
   let produtos, itens, mercado;
   try {
     [produtos, itens, mercado] = await Promise.all([
-      consultas.produtos(), consultas.itensDaLista(), consultas.ultimoMercado(),
+      consultas.produtos(), consultas.itensDaListaDoServidor(), consultas.ultimoMercado(),
     ]);
   } catch (e) {
     avisar(`Não consegui conferir o carrinho: ${e.message}`);
