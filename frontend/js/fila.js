@@ -1,7 +1,7 @@
 // ============================================================================
 // fila.js — alterações da Lista a caminho do servidor
 //
-// TODA alteração da Lista (quantidade, marca, preço, carrinho) passa por aqui,
+// TODA alteração da Lista (quantidade, marca, tamanho, preço, carrinho) passa por aqui,
 // com ou sem internet:
 //   1. vai para a fila no aparelho (IndexedDB), uma entrada por produto. Várias
 //      mudanças no mesmo produto se juntam: a entrada guarda o valor FINAL de
@@ -33,7 +33,7 @@ import * as local from "./local.js";
 import { acoes, consultas } from "./api.js";
 import { aoMudarRede } from "./rede.js";
 
-const VAZIO = Object.freeze({ quantidade: 0, no_carrinho: false, marca: null, preco_unitario: null, marcado_por: null });
+const VAZIO = Object.freeze({ quantidade: 0, no_carrinho: false, marca: null, preco_unitario: null, tamanho_qtd: null, tamanho_unidade: null, marcado_por: null });
 const REPETIR_A_CADA = 15000;
 
 const memoria = new Map();        // espelho da fila guardada

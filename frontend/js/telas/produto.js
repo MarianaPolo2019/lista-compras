@@ -4,14 +4,14 @@
 // Abre de baixo para cima a partir do "Histórico de preços ›" da Lista e do
 // nome de um item no detalhe da compra.
 //
-// ÚLTIMO PREÇO e o selo ao lado:
-//   - referência = a compra anterior DA MESMA MARCA da última compra;
-//   - não há anterior da mesma marca, mas há de outra → selo cinza, sem seta,
-//     "Outra marca · Pullman R$ 6,95 em 25/08" (a anterior mais nova);
-//   - nenhuma compra anterior → "primeira compra".
+// ÚLTIMO PREÇO e o selo ao lado: a última compra contra as anteriores, pela
+// regra de precos.js (comparar) — mesma marca e tamanho, preço por medida,
+// "Outra marca" cinza, "Embalagem diferente"; sem anterior, "primeira compra".
 //
 // GRÁFICO: um ponto por compra, em ordem de data, mês embaixo de cada ponto e
-// o último preenchido. SVG feito aqui, sem biblioteca.
+// o último preenchido. SVG feito aqui, sem biblioteca. Com 2 ou mais compras
+// com tamanho da mesma família, gráfico e cartões passam a ser em preço por
+// medida (R$/kg…), só com essas compras.
 //
 // AÇÕES (só para produto ativo):
 //   - Editar: renomeia; o índice único do banco (sem acento/maiúscula) recusa
@@ -23,8 +23,8 @@
 // ============================================================================
 
 import { consultas, acoes } from "../api.js";
-import { esc, moeda, numero, dataBR, dataCurta, mesCurto, avisar, abrirFolha, abrirDialogo, precisaDeInternet } from "../ui.js";
-import { montarPrecos, anteriorMesmaMarca, anteriorQualquer, variacao } from "../precos.js";
+import { esc, moeda, numero, dataBR, mesCurto, avisar, abrirFolha, abrirDialogo, precisaDeInternet } from "../ui.js";
+import { montarPrecos, comparar, partesDoSelo, familia, textoTamanho, porMedida, textoMedida, rotuloMedida } from "../precos.js";
 import { escolherCorredor } from "../escolhas.js";
 import * as fila from "../fila.js";
 
@@ -102,56 +102,71 @@ export async function abrirFolhaProduto(produtoId, { aoMudar = () => {} } = {}) 
     const ult = estado.compras[0];
     let selo = `<span class="selo-preco selo-preco--neutro">primeira compra</span>`;
     let contra = "";
-    const ref = anteriorMesmaMarca(estado.precos, ult);
-    const ant = anteriorQualquer(estado.precos, ult);
-    if (ref) {
-      const { dif, pct } = variacao(ult.preco, ref.preco);
-      selo = dif === 0
-        ? `<span class="selo-preco selo-preco--neutro">= mesmo preço</span>`
-        : `<span class="selo-preco selo-preco--${dif > 0 ? "subiu" : "desceu"}">${dif > 0 ? "▲" : "▼"} ${moeda(Math.abs(dif))} (${dif > 0 ? "+" : "−"}${pct}%)</span>`;
-      contra = `<div class="produto__contra">vs. compra de ${dataCurta(ref.data)}</div>`;
-    } else if (ant) {
-      const quem = [ant.marca, moeda(ant.preco)].filter(Boolean).join(" ");
-      selo = `<span class="selo-preco selo-preco--outra">Outra marca · ${esc(quem)} em ${dataCurta(ant.data)}</span>`;
+    const c = comparar(estado.precos, ult, { antesDe: ult });
+    if (c) {
+      const partes = partesDoSelo(c);
+      selo = partes.selo;
+      contra = [partes.contra, esc(partes.nota)].filter(Boolean).map((t) => `<div class="produto__contra">${t}</div>`).join("");
     }
 
-    const precos = estado.compras.map((c) => c.preco);
-    const menor = estado.compras.reduce((a, c) => (c.preco < a.preco ? c : a));
-    const maior = estado.compras.reduce((a, c) => (c.preco > a.preco ? c : a));
-    const media = precos.reduce((s, v) => s + v, 0) / precos.length;
+    // Preço por medida quando 2+ compras têm tamanho da mesma família (a mais
+    // comum); senão, preço unitário de todas as compras.
+    const porFamilia = new Map();
+    for (const r of estado.compras) {
+      if (!r.tamanho) continue;
+      const f = familia(r.tamanho);
+      porFamilia.set(f, [...(porFamilia.get(f) ?? []), r]);
+    }
+    const [fam, daFamilia] = [...porFamilia].sort((a, b) => b[1].length - a[1].length)[0] ?? [null, []];
+    const emMedida = daFamilia.length >= 2;
+    const serie = emMedida
+      ? daFamilia.map((r) => ({ ...r, valor: porMedida(r.preco, r.tamanho).bruto }))
+      : estado.compras.map((r) => ({ ...r, valor: r.preco }));
+    const menor = serie.reduce((a, r) => (r.valor < a.valor ? r : a));
+    const maior = serie.reduce((a, r) => (r.valor > a.valor ? r : a));
+    const media = serie.reduce((s, r) => s + r.valor, 0) / serie.length;
+    const unidade = emMedida ? ` (${rotuloMedida(fam)})` : "";
+    const medidaUlt = textoMedida(porMedida(ult.preco, ult.tamanho));
 
     return `
       <div class="produto__ultimo">
         <div>
-          <div class="produto__ultimo-rotulo">Último preço${ult.marca ? ` · ${esc(ult.marca)}` : ""}</div>
+          <div class="produto__ultimo-rotulo">Último preço${[ult.marca, textoTamanho(ult.tamanho)].filter(Boolean).map((t) => ` · ${esc(t)}`).join("")}</div>
           <div class="produto__ultimo-valor">${moeda(ult.preco)}</div>
+          ${medidaUlt ? `<div class="produto__medida">${esc(medidaUlt)}</div>` : ""}
         </div>
         <div class="produto__ultimo-selo">${selo}${contra}</div>
       </div>
-      <div class="secao__titulo produto__secao">Histórico de preços</div>
-      ${htmlGrafico([...estado.compras].reverse())}
+      <div class="secao__titulo produto__secao">Histórico de preços${esc(unidade)}</div>
+      ${emMedida && daFamilia.length < estado.compras.length
+        ? `<div class="produto__nota">Preço por ${esc(rotuloMedida(fam).slice(3))} das ${daFamilia.length} compras com tamanho informado (de ${estado.compras.length}).</div>` : ""}
+      ${htmlGrafico([...serie].reverse())}
       <div class="produto__cartoes">
         <div class="produto__cartao">
-          <div class="produto__cartao-rotulo">Menor</div>
-          <div class="produto__cartao-valor" style="color:var(--desceu)">${numero(menor.preco)}</div>
+          <div class="produto__cartao-rotulo">Menor${esc(unidade)}</div>
+          <div class="produto__cartao-valor" style="color:var(--desceu)">${numero(menor.valor)}</div>
           <div class="produto__cartao-marca">${esc(menor.marca ?? "")}</div>
         </div>
         <div class="produto__cartao">
-          <div class="produto__cartao-rotulo">Maior</div>
-          <div class="produto__cartao-valor" style="color:var(--subiu)">${numero(maior.preco)}</div>
+          <div class="produto__cartao-rotulo">Maior${esc(unidade)}</div>
+          <div class="produto__cartao-valor" style="color:var(--subiu)">${numero(maior.valor)}</div>
           <div class="produto__cartao-marca">${esc(maior.marca ?? "")}</div>
         </div>
         <div class="produto__cartao">
-          <div class="produto__cartao-rotulo">Média</div>
+          <div class="produto__cartao-rotulo">Média${esc(unidade)}</div>
           <div class="produto__cartao-valor">${numero(media)}</div>
         </div>
       </div>
       <div class="produto__compras">
-        ${estado.compras.map((c) => `
+        ${estado.compras.map((r) => {
+          const extra = [r.marca, textoTamanho(r.tamanho)].filter(Boolean).join(" · ");
+          const medida = textoMedida(porMedida(r.preco, r.tamanho));
+          return `
           <div class="produto__compra">
-            <span>${dataBR(c.data)}${c.marca ? ` <span class="produto__compra-marca">· ${esc(c.marca)}</span>` : ""}</span>
-            <span class="produto__compra-preco">${moeda(c.preco)}</span>
-          </div>`).join("")}
+            <span>${dataBR(r.data)}${extra ? ` <span class="produto__compra-marca">· ${esc(extra)}</span>` : ""}</span>
+            <span class="produto__compra-preco">${moeda(r.preco)}${medida ? `<span class="produto__compra-medida">${esc(medida)}</span>` : ""}</span>
+          </div>`;
+        }).join("")}
       </div>`;
   }
 
@@ -257,15 +272,15 @@ export async function abrirFolhaProduto(produtoId, { aoMudar = () => {} } = {}) 
   }
 }
 
-/** Gráfico de linha (viewBox 354 × 120, como no 7d), mês embaixo de cada ponto. */
+/** Gráfico de linha (viewBox 354 × 120, como no 7d), mês embaixo de cada ponto. `valor`: preço unitário ou por medida. */
 function htmlGrafico(cronologico) {
   const n = cronologico.length;
-  const precos = cronologico.map((c) => c.preco);
+  const precos = cronologico.map((c) => c.valor);
   const min = Math.min(...precos), max = Math.max(...precos);
   const x = (i) => (n === 1 ? 177 : 30 + (i * 300) / (n - 1));
   const y = (v) => (max === min ? 55 : 90 - ((v - min) / (max - min)) * 70);
-  const pontos = cronologico.map((c, i) => [x(i), y(c.preco)]);
-  const titulo = cronologico.map((c) => `${dataBR(c.data)}: ${moeda(c.preco)}`).join("; ");
+  const pontos = cronologico.map((c, i) => [x(i), y(c.valor)]);
+  const titulo = cronologico.map((c) => `${dataBR(c.data)}: ${moeda(c.valor)}`).join("; ");
   return `
     <svg class="grafico" viewBox="0 0 354 120" width="100%" height="120" role="img" aria-label="${esc(titulo)}">
       <g stroke="var(--divisoria)"><line x1="0" y1="20" x2="354" y2="20"/><line x1="0" y1="55" x2="354" y2="55"/><line x1="0" y1="90" x2="354" y2="90"/></g>

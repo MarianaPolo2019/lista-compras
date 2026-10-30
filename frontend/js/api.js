@@ -71,7 +71,7 @@ export class ErroApi extends Error {
 }
 
 /** As colunas de lista_itens que o app lê e grava (sem atualizado_por/updated_at). */
-const COLUNAS_ITEM = "produto_id, quantidade, no_carrinho, marca, preco_unitario, marcado_por";
+const COLUNAS_ITEM = "produto_id, quantidade, no_carrinho, marca, preco_unitario, tamanho_qtd, tamanho_unidade, marcado_por";
 
 /**
  * Mensagem que a Mari consegue entender. Os erros comuns ganham frase própria;
@@ -244,7 +244,7 @@ export const consultas = {
       const linhas = [];
       for (let de = 0; ; de += PAGINA) {
         const parte = conferir(await sb.from("compra_itens")
-          .select("produto_id, compra_id, marca, quantidade, preco_unitario, compras!inner(data, created_at)")
+          .select("produto_id, compra_id, marca, quantidade, preco_unitario, tamanho_qtd, tamanho_unidade, compras!inner(data, created_at)")
           .order("id")
           .range(de, de + PAGINA - 1)) ?? [];
         linhas.push(...parte);
@@ -273,7 +273,7 @@ export const consultas = {
   /** Uma compra com os itens e o nome/corredor de cada produto (ativos ou não). */
   async compra(id) {
     return conferir(await sb.from("compras")
-      .select("id, data, mercado, origem, total, created_at, compra_itens(id, produto_id, marca, quantidade, preco_unitario, produtos(nome, categoria_id, ativo))")
+      .select("id, data, mercado, origem, total, created_at, compra_itens(id, produto_id, marca, quantidade, preco_unitario, tamanho_qtd, tamanho_unidade, produtos(nome, categoria_id, ativo))")
       .eq("id", id).maybeSingle());
   },
 

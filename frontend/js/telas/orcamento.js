@@ -12,11 +12,15 @@
 //
 // ESTIMATIVA DO QUE FALTA
 //   Entram os pendentes e os itens do carrinho ainda sem preço. Preço de
-//   referência, nesta ordem: o preço já digitado na linha; o último preço da
+//   referência, nesta ordem: o preço já digitado na linha; depois a regra de
+//   precos.js (precoEstimado): mesma marca e tamanho, preço por medida × o
+//   tamanho da linha, e então, como antes, o último preço da
 //   marca da linha; o último preço do produto. Item sem nenhum desses fica FORA
 //   da conta e a tela diz quantos ficaram de fora. Nenhum valor é inventado.
 //
-// MESMOS ITENS: o que mercado.comparar_mesmos_itens() devolve, sem recalcular.
+// MESMOS ITENS: o que mercado.comparar_mesmos_itens() devolve, sem recalcular
+// (a função já ajusta o preço anterior pelo tamanho). O aparelho só confere se
+// algum par foi ajustado, para escrever "ajustado pelo tamanho".
 //
 // REINICIAR LISTA: antes de chamar mercado.finalizar_compra, a tela confere o
 // carrinho lido na hora (vazio, item sem preço ou com quantidade 0 → aviso e
@@ -26,10 +30,10 @@
 
 import { consultas, acoes } from "../api.js";
 import {
-  esc, moeda, numero, plural, normalizar, dataCurta, hojeSP, dataBR, percentual1,
+  esc, moeda, numero, plural, dataCurta, hojeSP, dataBR, percentual1,
   avisar, abrirDialogo,
 } from "../ui.js";
-import { montarPrecos } from "../precos.js";
+import { montarPrecos, precoEstimado, tamanhoDe, mesmoTamanho, familia } from "../precos.js";
 import { escolherProduto } from "../escolhas.js";
 import { definirFiltroDaLista } from "./lista.js";
 import { precisaDeInternet } from "../ui.js";
@@ -86,6 +90,7 @@ export async function telaOrcamento(ctx) {
 
   st.ctx = ctx;
   st.dados = calcular({ produtos, itens, config, observacoes, linhas, categorias, comparacao, erroComparacao });
+  st.dados.ajustado = algumAjustado(itensDoServidor, linhas, comparacao);
   st.dados.comparacaoOffline = comparacaoOffline;
   st.limiteConfirmado = st.dados.limite;
   desenhar();
@@ -106,10 +111,7 @@ function calcular({ produtos, itens, config, observacoes, linhas, categorias, co
   const precos = montarPrecos(linhas);
   let estimativa = 0, deFora = 0;
   for (const i of [...pendentes, ...carrinhoSemPreco]) {
-    const ult = precos.ultima.get(i.produto_id);
-    const marca = i.marca || ult?.marca || null;
-    const daMarca = marca ? precos.porMarca.get(`${i.produto_id}|${normalizar(marca)}`) : null;
-    const ref = i.preco_unitario != null ? Number(i.preco_unitario) : (daMarca?.preco ?? ult?.preco ?? null);
+    const ref = i.preco_unitario != null ? Number(i.preco_unitario) : precoEstimado(precos, i);
     if (ref == null) deFora++;
     else estimativa += i.quantidade * ref;
   }
@@ -124,6 +126,30 @@ function calcular({ produtos, itens, config, observacoes, linhas, categorias, co
     deFora,
     limite: config?.limite_gastos == null ? null : Number(config.limite_gastos),
   };
+}
+
+/**
+ * "ajustado pelo tamanho": refaz no aparelho só a parte da regra de
+ * mercado.comparar_mesmos_itens que decide se algum par teve o preço anterior
+ * convertido — item do carrinho (como o servidor tem) com preço e tamanho,
+ * contra o mesmo produto na compra comparada com tamanho da mesma família e
+ * quantidade diferente. Não muda nenhum número do cartão.
+ */
+function algumAjustado(itensDoServidor, linhas, comparacao) {
+  if (!comparacao?.compra_data || !Number(comparacao.qtd_produtos)) return false;
+  const daData = linhas.filter((l) => l.compras.data === comparacao.compra_data);
+  if (!daData.length) return false;
+  // No mesmo dia, a compra criada por último (a mesma ordem de precos.js).
+  const ultimaCriada = daData.reduce((a, l) => (String(l.compras.created_at) > String(a.compras.created_at) ? l : a));
+  const daCompra = daData.filter((l) => l.compra_id === ultimaCriada.compra_id);
+  return itensDoServidor.some((i) => {
+    const t = tamanhoDe(i);
+    if (!i.no_carrinho || i.preco_unitario == null || !t) return false;
+    return daCompra.some((l) => {
+      const antes = tamanhoDe(l);
+      return l.produto_id === i.produto_id && antes && familia(antes) === familia(t) && !mesmoTamanho(antes, t);
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -264,7 +290,7 @@ function htmlMesmosItens(d) {
   return `
     <div class="cartao-info__rotulo">Mesmos itens na compra de ${quando}</div>
     <div class="cartao-info__selo">${selo}</div>
-    <div class="cartao-info__nota">Comparando ${plural(Number(c.qtd_produtos), "produto", "produtos")} · ${moeda(c.total_hoje)} hoje contra ${moeda(c.total_anterior)}</div>`;
+    <div class="cartao-info__nota">Comparando ${plural(Number(c.qtd_produtos), "produto", "produtos")} · ${moeda(c.total_hoje)} hoje contra ${moeda(c.total_anterior)}${d.ajustado ? " · ajustado pelo tamanho" : ""}</div>`;
 }
 
 // ---------------------------------------------------------------------------
@@ -478,7 +504,7 @@ async function reiniciarLista() {
     texto: "Começa uma nova compra. Veja o que acontece:",
     linhas: [
       { tipo: "salva", rotulo: "Salva",
-        texto: `A compra vai para o Histórico com data, itens, quantidades, marcas e preços. ${dataBR(hoje)} · ${plural(carrinho.length, "item", "itens")} · total ${moeda(total)}.` },
+        texto: `A compra vai para o Histórico com data, itens, quantidades, marcas, tamanhos e preços. ${dataBR(hoje)} · ${plural(carrinho.length, "item", "itens")} · total ${moeda(total)}.` },
       { tipo: "zera", rotulo: "Zera",
         texto: `Quantidades e marcações.${naoPegos ? ` ${naoPegos === 1 ? "1 item que não foi pego volta" : `${naoPegos} itens que não foram pegos voltam`} para 0.` : ""}` },
       { tipo: "mantem", rotulo: "Mantém", texto: "Produtos, histórico de preços, limite e observações." },

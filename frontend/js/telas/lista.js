@@ -31,20 +31,31 @@
 //       a referência do selo de comparação e a lista do chip de marca.
 //   "Marca" de uma linha = a gravada em lista_itens; se não houver, a da
 //   última compra do produto; se o produto nunca foi comprado, nenhuma.
+//
+// TAMANHO (pré-preenchido como a marca, sem gravar sozinho)
+//   O da linha; senão, o da última compra da mesma marca; senão, o da última
+//   compra do produto. Grava quando a Mari escolhe na folha, ou junto com o
+//   preço/carrinho (como a marca). Os dois campos vão SEMPRE juntos.
+//   Trocar de marca: se o tamanho da linha é o que a marca antiga sugeria,
+//   passa a ser o que a nova sugere; um tamanho escolhido à mão fica.
+//   "Sem tamanho" esconde a sugestão neste aparelho até a Mari escolher outro.
 // ============================================================================
 
 import { consultas, acoes } from "../api.js";
-import { esc, moeda, numero, plural, normalizar, htmlAvatar, avisar, dataCurta, precisaDeInternet, ligarArrasteHorizontal } from "../ui.js";
+import { esc, moeda, numero, plural, normalizar, htmlAvatar, avisar, dataCurta, precisaDeInternet, ligarArrasteHorizontal, abrirFolha } from "../ui.js";
 import { htmlSelo, aoMudarLista, aoReconectar, definirPendentes, marcarSincronizado } from "../conexao.js";
 import * as fila from "../fila.js";
-import { montarPrecos } from "../precos.js";
+import {
+  montarPrecos, comparar, partesDoSelo, marcaMostrada, tamanhoDe, tamanhoMostrado, tamanhoSugerido,
+  camposDeTamanho, mesmoTamanho, mesmaMarca, textoTamanho, porMedida, textoMedida, UNIDADES,
+} from "../precos.js";
 import { escolherCorredor, nomeDeProduto } from "../escolhas.js";
 import { abrirFolhaProduto } from "./produto.js";
 
 const CHAVE_FILTRO = "minhas-compras.filtro";
 const FILTROS = ["todos", "levar", "carrinho"];
 const ATRASO_PRECO = 600;
-const VAZIO = Object.freeze({ quantidade: 0, no_carrinho: false, marca: null, preco_unitario: null, marcado_por: null });
+const VAZIO = Object.freeze({ quantidade: 0, no_carrinho: false, marca: null, preco_unitario: null, tamanho_qtd: null, tamanho_unidade: null, marcado_por: null });
 
 const st = {
   ctx: null,
@@ -52,7 +63,8 @@ const st = {
   produtos: new Map(),       // id → produto
   confirmado: new Map(),     // produto_id → linha do banco
   local: new Map(),          // produto_id → linha mostrada
-  hist: { ultima: new Map(), porMarca: new Map(), marcas: new Map() },
+  hist: { ultima: new Map(), porMarca: new Map(), marcas: new Map(), doProduto: new Map() },
+  semTamanho: new Set(),     // produtos em que a Mari tocou "Sem tamanho" (só neste aparelho)
   filtro: lerFiltro(),
   busca: "",
   aberto: null,              // produto_id da linha aberta (só uma)
@@ -191,7 +203,27 @@ function montarHistorico(linhas) {
 
 /** A marca que a linha mostra: a escolhida; senão, a da última compra. */
 function marcaDe(id) {
-  return item(id).marca || st.hist.ultima.get(id)?.marca || null;
+  return marcaMostrada(st.hist, { ...item(id), produto_id: id });
+}
+
+/** O tamanho que a linha mostra: o gravado; senão, o sugerido (ver o topo). */
+function tamanhoDaLinha(id) {
+  if (!tamanhoDe(item(id)) && st.semTamanho.has(id)) return null;
+  return tamanhoMostrado(st.hist, { ...item(id), produto_id: id }, marcaDe(id));
+}
+
+/**
+ * Ao mexer na linha (preço, carrinho), a marca e o tamanho que ela mostra
+ * viram os gravados: são os que vão para o Histórico quando a compra for
+ * finalizada. Só os que ainda não estão gravados.
+ */
+function camposMostrados(id) {
+  const campos = {};
+  const i = item(id);
+  if (!i.marca && marcaDe(id)) campos.marca = marcaDe(id);
+  const t = tamanhoDaLinha(id);
+  if (!tamanhoDe(i) && t) Object.assign(campos, camposDeTamanho(t));
+  return campos;
 }
 
 const comparaNome = (a, b) => a.nome.localeCompare(b.nome, "pt-BR", { sensitivity: "base" });
@@ -500,13 +532,14 @@ function htmlBlocoCarrinho() {
 }
 
 /**
- * "Kicaldo · 2 un. · última R$ 8,09". Marca omitida se não houver; com
- * quantidade 0 o "0 un." some ("Kicaldo · última R$ 8,09").
+ * "Toddy · 700 g · 2 un. · última R$ 16,10". Marca e tamanho omitidos se não
+ * houver; com quantidade 0 o "0 un." some ("Toddy · 700 g · última R$ 16,10").
  */
 function subLinha(p) {
   const i = item(p.id);
   const ult = st.hist.ultima.get(p.id);
-  return [marcaDe(p.id), i.quantidade > 0 ? `${i.quantidade} un.` : "", ult ? `última ${moeda(ult.preco)}` : "primeira compra"]
+  return [marcaDe(p.id), textoTamanho(tamanhoDaLinha(p.id)), i.quantidade > 0 ? `${i.quantidade} un.` : "",
+    ult ? `última ${moeda(ult.preco)}` : "primeira compra"]
     .filter(Boolean).join(" · ");
 }
 
@@ -554,14 +587,19 @@ function htmlLinhaCarrinho(p) {
 }
 
 /**
- * "Empório São João · 2 × R$ 27,50": a conta nunca é cortada; se faltar
- * espaço, quem ganha reticências é a marca (duas partes, CSS em estilo.css).
+ * "Toddy · 700 g · 2 × R$ 16,10": a conta nunca é cortada; se faltar espaço,
+ * a marca ganha reticências primeiro, depois o tamanho (CSS em estilo.css).
  */
 function htmlSubCarrinho(id, marca) {
   const i = item(id);
   const conta = i.preco_unitario != null ? `${i.quantidade} × ${moeda(i.preco_unitario)}` : `${i.quantidade} un.`;
-  return `${marca ? `<span class="sub__marca">${esc(marca)}</span><span class="sub__conta">&nbsp;· ${esc(conta)}</span>`
-    : `<span class="sub__conta">${esc(conta)}</span>`}`;
+  const partes = [];
+  if (marca) partes.push(["marca", marca]);
+  const tamanho = textoTamanho(tamanhoDaLinha(id));
+  if (tamanho) partes.push(["tamanho", tamanho]);
+  partes.push(["conta", conta]);
+  return partes.map(([classe, texto], n) =>
+    `<span class="sub__${classe}">${n ? "&nbsp;· " : ""}${esc(texto)}</span>`).join("");
 }
 
 function htmlTotalLinha(id) {
@@ -575,13 +613,18 @@ function htmlTotalLinha(id) {
 function htmlEditor(p) {
   const i = item(p.id);
   const marca = marcaDe(p.id);
+  const tamanho = textoTamanho(tamanhoDaLinha(p.id));
   return `
     <div class="editor">
       <div class="editor__marca">
         <span class="editor__rotulo">Marca</span>
         <button type="button" class="chip-marca${st.marcasAbertas ? " chip-marca--aberto" : ""}${marca ? "" : " chip-marca--vazio"}"
                 data-acao="marcas" aria-expanded="${st.marcasAbertas}">
-          ${esc(marca || "Marca")}<span class="chip-marca__seta" aria-hidden="true">▾</span>
+          <span class="chip-marca__texto">${esc(marca || "Marca")}</span><span class="chip-marca__seta" aria-hidden="true">▾</span>
+        </button>
+        <button type="button" class="chip-marca chip-tamanho${tamanho ? "" : " chip-marca--vazio"}"
+                data-acao="tamanho" aria-label="Tamanho: ${esc(tamanho || "não informado")}">
+          <span class="chip-marca__texto">${esc(tamanho || "Tamanho")}</span><span class="chip-marca__seta" aria-hidden="true">▾</span>
         </button>
       </div>
       ${st.marcasAbertas ? htmlMarcas(p.id, marca) : ""}
@@ -599,6 +642,7 @@ function htmlEditor(p) {
         </label>
       </div>
       <div class="editor__conta" data-conta>${htmlConta(p.id)}</div>
+      <div class="editor__medida" data-medida>${htmlMedida(p.id)}</div>
       <div class="editor__selo" data-selo-preco>${htmlSeloPreco(p.id)}</div>
       <button type="button" class="link-historico" data-acao="historico">Histórico de preços ›</button>
     </div>`;
@@ -642,45 +686,36 @@ function htmlConta(id) {
   return `${i.quantidade} × ${moeda(i.preco_unitario)} = ${moeda(i.quantidade * Number(i.preco_unitario))}`;
 }
 
+/** "R$ 23,00/kg", só com tamanho E preço. */
+function htmlMedida(id) {
+  const i = item(id);
+  return textoMedida(porMedida(i.preco_unitario, tamanhoDaLinha(id)));
+}
+
 /**
  * Selo de comparação de preço:
  *   - item no carrinho sem preço → aviso "Digite o preço para somar no carrinho";
  *   - produto nunca comprado → "primeira compra";
  *   - sem preço digitado → nada;
- *   - a referência é a última compra DA MESMA MARCA; linha sem marca nenhuma
- *     compara com a última compra do produto;
- *   - marca nunca comprada deste produto (mas o produto tem histórico) → selo
- *     cinza, sem seta: "Outra marca · Panco R$ 7,99 em 29/10";
+ *   - o resto é a regra de precos.js (comparar): mesma marca e tamanho →
+ *     preço unitário; outro tamanho da mesma família → preço por medida;
+ *     outra marca → cinza; embalagem de outra família → "Embalagem diferente".
  *   - maior ▲ vermelho, menor ▼ verde, igual "= mesmo preço": seta e cor
  *     juntas, percentual arredondado para inteiro.
  */
 function htmlSeloPreco(id) {
   const i = item(id);
-  const ult = st.hist.ultima.get(id);
   if (i.no_carrinho && i.preco_unitario == null) {
     return `<span class="selo-aviso">Digite o preço para somar no carrinho</span>`;
   }
-  if (!ult) return `<span class="selo-preco selo-preco--neutro">primeira compra</span>`;
+  const c = comparar(st.hist, {
+    produto_id: id, marca: marcaDe(id), tamanho: tamanhoDaLinha(id),
+    preco: i.preco_unitario == null ? null : Number(i.preco_unitario),
+  });
+  if (!c) return `<span class="selo-preco selo-preco--neutro">primeira compra</span>`;
   if (i.preco_unitario == null) return "";
-
-  const marca = marcaDe(id);
-  let ref = ult;
-  if (marca) {
-    ref = st.hist.porMarca.get(`${id}|${normalizar(marca)}`);
-    if (!ref) {
-      const deQuem = [ult.marca, moeda(ult.preco)].filter(Boolean).join(" ");
-      return `<span class="selo-preco selo-preco--outra">Outra marca · ${esc(deQuem)} em ${dataCurta(ult.data)}</span>`;
-    }
-  }
-
-  const preco = Number(i.preco_unitario);
-  const dif = Math.round((preco - ref.preco) * 100) / 100;
-  const contra = `<span class="selo-preco__contra">vs. ${moeda(ref.preco)} em ${dataCurta(ref.data)}</span>`;
-  if (dif === 0) return `<span class="selo-preco selo-preco--neutro">= mesmo preço</span>${contra}`;
-  const pct = Math.round((Math.abs(dif) / ref.preco) * 100);
-  return dif > 0
-    ? `<span class="selo-preco selo-preco--subiu">▲ ${moeda(dif)} (+${pct}%)</span>${contra}`
-    : `<span class="selo-preco selo-preco--desceu">▼ ${moeda(-dif)} (−${pct}%)</span>${contra}`;
+  const { selo, contra, nota } = partesDoSelo(c);
+  return `${selo}${contra ? `<span class="selo-preco__contra">${contra}</span>` : ""}${nota ? `<span class="selo-preco__nota">${esc(nota)}</span>` : ""}`;
 }
 
 /** Atualiza só o que depende do preço/quantidade, sem tocar no campo em foco. */
@@ -691,6 +726,8 @@ function atualizarAoVivo(id) {
   if (linha) {
     const conta = linha.querySelector("[data-conta]");
     if (conta) conta.textContent = htmlConta(id);
+    const medida = linha.querySelector("[data-medida]");
+    if (medida) medida.textContent = htmlMedida(id);
     const selo = linha.querySelector("[data-selo-preco]");
     if (selo) selo.innerHTML = htmlSeloPreco(id);
     const sub = linha.querySelector("[data-sub-carrinho]");
@@ -730,6 +767,7 @@ function ligarCorpo(tela) {
           st.ctx.tela.querySelector("[data-nova-marca]")?.focus();
         },
         "salvar-marca": () => salvarMarcaDigitada(id),
+        tamanho: () => abrirFolhaTamanho(id),
         // Renomear, mudar corredor ou excluir lá dentro: a Lista relê tudo.
         historico: () => abrirFolhaProduto(id, { aoMudar: () => st.ctx.redesenhar() }),
       })[alvo.dataset.acao]?.();
@@ -765,11 +803,8 @@ function alternarCarrinho(id) {
     mudar(id, { no_carrinho: false, marcado_por: null });
     if (st.aberto === id) st.aberto = null;
   } else {
-    const campos = { no_carrinho: true, marcado_por: st.ctx.estado.usuario.id };
+    const campos = { no_carrinho: true, marcado_por: st.ctx.estado.usuario.id, ...camposMostrados(id) };
     if (i.quantidade < 1) campos.quantidade = 1;
-    // A marca que a linha mostra vira a marca gravada: é a que vai para o
-    // histórico quando a compra for finalizada.
-    if (!i.marca && marcaDe(id)) campos.marca = marcaDe(id);
     mudar(id, campos);
     if (i.preco_unitario == null) {
       st.aberto = id;
@@ -790,7 +825,142 @@ function mudarQuantidade(id, delta) {
 function escolherMarca(id, marca) {
   st.marcasAbertas = false;
   st.digitandoMarca = false;
-  mudar(id, { marca });
+  const campos = { marca };
+  // Tamanho gravado igual ao que a marca antiga sugeria = veio da sugestão:
+  // acompanha a marca nova. Escolhido à mão (outro valor), fica. Sem tamanho
+  // gravado, a sugestão da marca nova aparece sozinha (tamanhoDaLinha).
+  const gravado = tamanhoDe(item(id));
+  if (gravado && !mesmaMarca(marca, marcaDe(id)) && mesmoTamanho(gravado, tamanhoSugerido(st.hist, id, marcaDe(id)))) {
+    Object.assign(campos, camposDeTamanho(tamanhoSugerido(st.hist, id, marca)));
+  }
+  mudar(id, campos);
+  desenharTudo();
+}
+
+// ---------------------------------------------------------------------------
+// Folha de tamanho
+// ---------------------------------------------------------------------------
+
+/** Os tamanhos já comprados do produto, sem repetir: os da marca da linha primeiro, mais novo primeiro. */
+function tamanhosComprados(id) {
+  const marca = marcaDe(id);
+  const compras = (st.hist.doProduto.get(id) ?? []).filter((r) => r.tamanho);
+  const ordem = [...compras.filter((r) => mesmaMarca(r.marca, marca)), ...compras.filter((r) => !mesmaMarca(r.marca, marca))];
+  const vistos = [];
+  for (const r of ordem) if (!vistos.some((v) => mesmoTamanho(v.tamanho, r.tamanho))) vistos.push(r);
+  return vistos;
+}
+
+/** Aceita vírgula ou ponto, até 3 casas; > 0 e cabe em numeric(10,3). */
+function lerQuantidadeDeTamanho(texto) {
+  const t = String(texto ?? "").trim().replace(/\s/g, "");
+  if (!/^\d{1,7}([.,]\d{1,3})?$/.test(t)) return null;
+  const v = Number(t.replace(",", "."));
+  return v > 0 ? v : null;
+}
+
+function abrirFolhaTamanho(id) {
+  const p = st.produtos.get(id);
+  const folha = abrirFolha({ rotulo: `Tamanho de ${p?.nome ?? "produto"}` });
+  const marca = marcaDe(id);
+  const atual = tamanhoDaLinha(id);
+  const comprados = tamanhosComprados(id);
+  let outro = false;
+  let unidade = null;
+
+  const desenhar = () => {
+    folha.corpo.innerHTML = `
+      <div class="folha__titulo">Tamanho</div>
+      <div class="folha__texto">${esc([p?.nome, marca].filter(Boolean).join(" · "))}</div>
+      <div class="folha__lista">
+        ${comprados.map((r) => {
+          const marcado = mesmoTamanho(r.tamanho, atual);
+          const sub = [mesmaMarca(r.marca, marca) ? "" : r.marca, `última ${moeda(r.preco)}`, dataCurta(r.data)].filter(Boolean).join(" · ");
+          return `
+            <button type="button" class="marcas__opcao" data-tam="${esc(`${r.tamanho.qtd}|${r.tamanho.unidade}`)}" aria-pressed="${marcado}">
+              <span class="marcas__texto">
+                <span class="marcas__nome">${esc(textoTamanho(r.tamanho))}</span>
+                <span class="marcas__sub">${esc(sub)}</span>
+              </span>
+              <span class="marcas__check" aria-hidden="true">${marcado ? "✓" : ""}</span>
+            </button>`;
+        }).join("")}
+        ${outro ? `
+          <div class="tamanho-outro">
+            <label class="tamanho-outro__campo">
+              <span class="campo__rotulo">Quantidade</span>
+              <input class="campo__entrada" data-tam-qtd type="text" inputmode="decimal" placeholder="Ex.: 700 ou 0,7"
+                     autocomplete="off" enterkeyhint="done" aria-label="Quantidade do tamanho">
+            </label>
+            <div class="tamanho-outro__unidades" role="group" aria-label="Unidade">
+              ${UNIDADES.map((u) => `<button type="button" class="tamanho-outro__unidade" data-unidade="${u}" aria-pressed="${u === unidade}">${u}</button>`).join("")}
+            </div>
+            <button type="button" class="botao" data-salvar-tam disabled>Salvar tamanho</button>
+          </div>` : `
+          <button type="button" class="marcas__opcao marcas__opcao--outra" data-outro-tam>
+            <span class="marcas__texto">
+              <span class="marcas__nome">Outro tamanho…</span>
+              <span class="marcas__sub">Digitar quantidade e unidade</span>
+            </span>
+          </button>`}
+        <button type="button" class="marcas__opcao" data-sem-tam aria-pressed="${!atual}">
+          <span class="marcas__texto"><span class="marcas__nome">Sem tamanho</span></span>
+          <span class="marcas__check" aria-hidden="true">${atual ? "" : "✓"}</span>
+        </button>
+      </div>
+      <button type="button" class="botao botao--secundario folha__cancelar" data-cancelar>Cancelar</button>`;
+    if (outro) ligarOutro();
+  };
+
+  // A unidade é obrigatória: "Salvar" só acende com número válido E unidade.
+  const ligarOutro = () => {
+    const campo = folha.corpo.querySelector("[data-tam-qtd]");
+    const salvar = folha.corpo.querySelector("[data-salvar-tam]");
+    const conferir = () => { salvar.disabled = !(lerQuantidadeDeTamanho(campo.value) && unidade); };
+    campo.addEventListener("input", () => {
+      campo.classList.toggle("campo__entrada--invalido", campo.value.trim() !== "" && !lerQuantidadeDeTamanho(campo.value));
+      conferir();
+    });
+    campo.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); if (!salvar.disabled) salvar.click(); } });
+    for (const b of folha.corpo.querySelectorAll("[data-unidade]")) {
+      b.addEventListener("click", () => {
+        unidade = b.dataset.unidade;
+        for (const o of folha.corpo.querySelectorAll("[data-unidade]")) o.setAttribute("aria-pressed", String(o === b));
+        conferir();
+      });
+    }
+    salvar.addEventListener("click", () => {
+      const qtd = lerQuantidadeDeTamanho(campo.value);
+      if (qtd && unidade) terminar({ qtd, unidade });
+    });
+    campo.focus();
+  };
+
+  const terminar = (t) => {
+    folha.fechar();
+    escolherTamanho(id, t);
+  };
+
+  folha.el.addEventListener("click", (e) => {
+    if (e.target.closest("[data-fechar-folha], [data-cancelar]")) return folha.fechar();
+    const op = e.target.closest("[data-tam]");
+    if (op) {
+      const [qtd, u] = op.dataset.tam.split("|");
+      return terminar({ qtd: Number(qtd), unidade: u });
+    }
+    if (e.target.closest("[data-sem-tam]")) return terminar(null);
+    if (e.target.closest("[data-outro-tam]")) { outro = true; desenhar(); }
+  });
+  desenhar();
+}
+
+/** Grava o tamanho escolhido (null = "Sem tamanho"): os dois campos juntos. */
+function escolherTamanho(id, t) {
+  if (t) st.semTamanho.delete(id);
+  else st.semTamanho.add(id);
+  // "Sem tamanho" num produto sem tamanho gravado só esconde a sugestão:
+  // não cria linha no banco à toa.
+  if (t || tamanhoDe(item(id))) mudar(id, camposDeTamanho(t));
   desenharTudo();
 }
 
@@ -826,7 +996,7 @@ function ligarCampoPreco(id, campo) {
     campo.closest(".preco").classList.toggle("preco--invalido", !r.ok);
     if (!r.ok) return;
     if (r.valor === (item(id).preco_unitario == null ? null : Number(item(id).preco_unitario))) return;
-    mudar(id, precoComMarca(id, r.valor), { atraso: ATRASO_PRECO });
+    mudar(id, { preco_unitario: r.valor, ...camposMostrados(id) }, { atraso: ATRASO_PRECO });
     atualizarAoVivo(id);
   });
   campo.addEventListener("keydown", (e) => {
@@ -838,13 +1008,6 @@ function ligarCampoPreco(id, campo) {
     campo.value = i.preco_unitario == null ? "" : numero(i.preco_unitario).replace(/\./g, "");
     campo.closest(".preco")?.classList.remove("preco--invalido");
   });
-}
-
-/** Ao gravar um preço, a marca mostrada vira a gravada (ver alternarCarrinho). */
-function precoComMarca(id, valor) {
-  const campos = { preco_unitario: valor };
-  if (!item(id).marca && marcaDe(id)) campos.marca = marcaDe(id);
-  return campos;
 }
 
 // ---------------------------------------------------------------------------
@@ -901,7 +1064,8 @@ function aplicarRemoto({ eventType, new: novo, old }) {
 function pick(l) {
   return {
     produto_id: l.produto_id, quantidade: l.quantidade, no_carrinho: l.no_carrinho,
-    marca: l.marca, preco_unitario: l.preco_unitario, marcado_por: l.marcado_por,
+    marca: l.marca, preco_unitario: l.preco_unitario,
+    tamanho_qtd: l.tamanho_qtd ?? null, tamanho_unidade: l.tamanho_unidade ?? null, marcado_por: l.marcado_por,
   };
 }
 

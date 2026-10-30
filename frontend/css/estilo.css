@@ -1382,3 +1382,53 @@ a.cadastro { color: inherit; text-decoration: none; }
   font-size: 15px;
   box-shadow: var(--sombra-flutuante);
 }
+
+/* ==========================================================================
+   Etapa 6 — tamanho do produto e preço por medida
+   ========================================================================== */
+
+/* Chips de marca e tamanho lado a lado; quebram de linha se não couberem. */
+.editor__marca { flex-wrap: wrap; }
+.chip-marca { min-width: 0; }
+.chip-marca__texto { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip-tamanho { flex: none; }
+
+/* "R$ 23,00/kg" logo abaixo da conta da linha. */
+.editor__medida { font-size: 13px; font-weight: 600; color: var(--texto-fraco); margin-top: 4px; }
+.editor__medida:empty { display: none; }
+.selo-preco__nota { flex-basis: 100%; font-size: 12px; font-style: italic; color: var(--texto-fraco); }
+
+/* Folha de tamanho: as opções usam o desenho da lista de marcas. */
+.folha .marcas__opcao { min-height: var(--toque); }
+.tamanho-outro { padding: 6px 0 14px; border-bottom: 1px solid var(--divisoria); }
+.tamanho-outro__campo { display: block; }
+.campo__entrada--invalido { border-color: var(--subiu); background: var(--subiu-fundo); }
+.tamanho-outro__unidades { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.tamanho-outro__unidade {
+  min-width: var(--toque);
+  height: var(--toque);
+  padding: 0 14px;
+  border-radius: var(--raio-pilula);
+  border: 1.5px solid var(--borda);
+  background: #fff;
+  font-size: 15px;
+  font-weight: 700;
+}
+.tamanho-outro__unidade[aria-pressed="true"] { background: var(--magenta); border-color: var(--magenta); color: #fff; }
+.tamanho-outro .botao { width: 100%; }
+
+/* Carrinho: corta a marca primeiro, depois o tamanho; a conta nunca. */
+/* O peso enorme faz a marca absorver todo o aperto; só depois de ela chegar a 0
+   o tamanho encolhe (com peso 1000 o tamanho ainda perdia uma fração de pixel). */
+.sub__marca { flex: 0 1000000 auto; }
+.sub__tamanho { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Histórico e folha do produto: o preço por medida, discreto. */
+.det__medida { font-size: 12px; color: var(--texto-fraco); }
+.produto__medida { font-size: 13px; font-weight: 600; color: var(--texto-fraco); }
+.produto__nota { font-size: 12px; color: var(--texto-fraco); margin-top: 2px; }
+.produto__compra-medida { display: block; font-size: 12px; font-weight: 500; color: var(--texto-fraco); text-align: right; }
+/* Selo longo ("Outra marca · … (R$ 29,95/kg) em 30/10") quebra em linhas
+   sem espremer o último preço. */
+.produto__ultimo > :first-child { flex: none; }
+.produto__ultimo-selo { flex: 1; min-width: 0; }

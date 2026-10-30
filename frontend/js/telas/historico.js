@@ -8,15 +8,17 @@
 //   "primeira compra". Compra de nota fiscal leva o selo "Nota fiscal".
 //
 // DETALHE (só consulta)
-//   Cada item é comparado com a última compra ANTERIOR a esta do mesmo
-//   produto e da MESMA marca (precos.js). Produto que mudou de marca, ou que
-//   não tinha compra anterior, não ganha selo nem entra nos destaques.
-//   Destaques: até 3 que mais subiram e até 3 que mais caíram, por percentual.
+//   Cada item é comparado com as compras ANTERIORES a esta pela regra de
+//   precos.js (comparar): mesma marca e tamanho, ou outro tamanho da mesma
+//   família pelo preço por medida. Outra marca, embalagem de outra família ou
+//   produto sem compra anterior não ganham selo nem entram nos destaques.
+//   Destaques: até 3 que mais subiram e até 3 que mais caíram, por percentual
+//   (casos 1 e 2 da regra).
 // ============================================================================
 
 import { consultas } from "../api.js";
 import { esc, moeda, dataBR, dataCurta, plural } from "../ui.js";
-import { montarPrecos, anteriorMesmaMarca, variacao } from "../precos.js";
+import { montarPrecos, comparar, tamanhoDe, textoTamanho, porMedida, textoMedida } from "../precos.js";
 import { abrirFolhaProduto } from "./produto.js";
 
 export async function telaHistorico(ctx) {
@@ -98,21 +100,23 @@ async function telaDetalhe(ctx, id) {
   const itens = compra.compra_itens ?? [];
   const precos = montarPrecos(linhas);
 
-  // Cada item com a sua referência (mesmo produto, mesma marca, compra anterior).
+  // Cada item com a sua comparação (compras anteriores a esta, regra de precos.js).
   const analisados = itens.map((it) => {
     const reg = {
-      produto_id: it.produto_id, compra_id: compra.id, marca: it.marca || null,
+      produto_id: it.produto_id, compra_id: compra.id, marca: it.marca || null, tamanho: tamanhoDe(it),
       preco: Number(it.preco_unitario), data: compra.data, criada: String(compra.created_at),
     };
-    const ref = anteriorMesmaMarca(precos, reg);
-    const v = ref ? { ...variacao(reg.preco, ref.preco), ref } : null;
-    return { ...it, nome: it.produtos?.nome ?? "Produto", categoria_id: it.produtos?.categoria_id, preco: reg.preco, v };
+    const c = comparar(precos, reg, { antesDe: reg });
+    // Selo colorido só com referência da mesma marca (casos 1, 2 e 3).
+    const v = c && c.dif != null ? c : null;
+    return { ...it, nome: it.produtos?.nome ?? "Produto", categoria_id: it.produtos?.categoria_id, preco: reg.preco, tamanho: reg.tamanho, v };
   });
 
-  const comVariacao = analisados.filter((a) => a.v && a.v.dif !== 0);
-  const pctReal = (a) => (a.preco - a.v.ref.preco) / a.v.ref.preco;
-  const caros = comVariacao.filter((a) => a.v.dif > 0).sort((a, b) => pctReal(b) - pctReal(a)).slice(0, 3);
-  const baratos = comVariacao.filter((a) => a.v.dif < 0).sort((a, b) => pctReal(a) - pctReal(b)).slice(0, 3);
+  // Destaques: só mesmo tamanho (1) ou tamanho convertido (2), pelo percentual.
+  const comVariacao = analisados.filter((a) => a.v && (a.v.caso === 1 || a.v.caso === 2) && a.v.dif !== 0);
+  const caros = comVariacao.filter((a) => a.v.dif > 0).sort((a, b) => b.v.real - a.v.real).slice(0, 3);
+  const baratos = comVariacao.filter((a) => a.v.dif < 0).sort((a, b) => a.v.real - b.v.real).slice(0, 3);
+  const porMed = (a) => (a.v.caso === 2 ? `/${a.v.medida.por}` : "");
 
   ctx.cabecalho.innerHTML = `
     ${voltar}
@@ -125,7 +129,7 @@ async function telaDetalhe(ctx, id) {
   const destaque = (a) => `
     <div class="destaque">
       <button type="button" class="destaque__nome" data-produto="${esc(a.produto_id)}">${esc(a.nome)}</button>
-      <span class="selo-preco selo-preco--${a.v.dif > 0 ? "subiu" : "desceu"}">${a.v.dif > 0 ? "▲" : "▼"} ${moeda(Math.abs(a.v.dif))} (${a.v.dif > 0 ? "+" : "−"}${a.v.pct}%)</span>
+      <span class="selo-preco selo-preco--${a.v.dif > 0 ? "subiu" : "desceu"}">${a.v.dif > 0 ? "▲" : "▼"} ${moeda(Math.abs(a.v.dif))}${porMed(a)} (${a.v.dif > 0 ? "+" : "−"}${a.v.pct}%)</span>
     </div>`;
 
   // Seções na ordem dos corredores; dentro, ordem alfabética.
@@ -138,15 +142,18 @@ async function telaDetalhe(ctx, id) {
 
   const linhaItem = (a) => {
     const temQtd = a.quantidade != null;
-    const sub = [a.marca, temQtd ? `${a.quantidade} × ${moeda(a.preco)}` : ""].filter(Boolean).join(" · ");
+    // "Marca · 700 g · 2 × R$ 8,05", ou "Marca · 700 g" sem quantidade.
+    const sub = [a.marca, textoTamanho(a.tamanho), temQtd ? `${a.quantidade} × ${moeda(a.preco)}` : ""].filter(Boolean).join(" · ");
+    const medida = textoMedida(porMedida(a.preco, a.tamanho));
     const selo = !a.v ? "" : a.v.dif === 0
       ? `<span class="selo-mini selo-mini--neutro">= mesmo preço</span>`
-      : `<span class="selo-mini selo-mini--${a.v.dif > 0 ? "subiu" : "desceu"}">${a.v.dif > 0 ? "▲ +" : "▼ −"}${a.v.pct}%</span>`;
+      : `<span class="selo-mini selo-mini--${a.v.dif > 0 ? "subiu" : "desceu"}">${a.v.dif > 0 ? "▲ +" : "▼ −"}${a.v.pct}%${porMed(a)}</span>`;
     return `
       <div class="det">
         <div class="det__texto">
           <button type="button" class="det__nome" data-produto="${esc(a.produto_id)}">${esc(a.nome)}</button>
           ${sub ? `<div class="det__sub">${esc(sub)}</div>` : ""}
+          ${medida ? `<div class="det__medida">${esc(medida)}</div>` : ""}
         </div>
         <div class="det__lado">
           <div class="det__valor">${temQtd ? moeda(a.quantidade * a.preco) : `${moeda(a.preco)} un.`}</div>
@@ -163,7 +170,7 @@ async function telaDetalhe(ctx, id) {
     ${baratos.length ? `
       <div class="secao secao--destaque"><span class="secao__titulo" style="color:var(--desceu)">▼ Mais baratos nesta compra</span></div>
       ${baratos.map(destaque).join("")}` : ""}
-    ${!caros.length && !baratos.length ? `<p class="nota det__sem-destaque">Nenhum item desta compra tem compra anterior da mesma marca para comparar.</p>` : ""}
+    ${!caros.length && !baratos.length ? `<p class="nota det__sem-destaque">Nenhum item desta compra tem compra anterior da mesma marca e da mesma embalagem para comparar.</p>` : ""}
     ${grupos.filter((g) => g.itens.length).map((g) => `
       <div class="secao secao--resumo"><span class="secao__titulo">${esc(g.nome)}</span></div>
       ${g.itens.map(linhaItem).join("")}`).join("")}`;
