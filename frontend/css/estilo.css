@@ -1,0 +1,697 @@
+/* ==========================================================================
+   estilo.css — Minhas Compras
+
+   Todos os valores abaixo saíram dos arquivos aprovados do Claude Design
+   ("Minhas Compras v5.dc.html" e "Minhas Compras v5 - Telas.dc.html"), copiados
+   dos estilos inline das telas, e não estimados a olho. Quando um valor aparece
+   no design com um papel, ele vira token aqui com esse papel no nome; as telas
+   usam só os tokens, nunca o hexadecimal solto.
+
+   O design é só claro: não há versão escura aprovada, então não há tema escuro.
+   ========================================================================== */
+
+/* A Figtree é servida daqui, não do Google Fonts: o app precisa abrir no
+   mercado com sinal ruim, e a fonte entra no cache do service worker. Os dois
+   arquivos são os mesmos do Nosso Plano (fonte variável, pesos 300 a 900). */
+@font-face {
+  font-family: "Figtree";
+  font-style: normal;
+  font-weight: 300 900;
+  font-display: swap;
+  src: url("../assets/fonts/figtree-latin.woff2") format("woff2");
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: "Figtree";
+  font-style: normal;
+  font-weight: 300 900;
+  font-display: swap;
+  src: url("../assets/fonts/figtree-latin-ext.woff2") format("woff2");
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* --------------------------------------------------------------------------
+   Tokens
+   -------------------------------------------------------------------------- */
+:root {
+  /* Marca */
+  --magenta:            #c93a6e;  /* aba ativa, botão principal, "+", borda do preço */
+  --magenta-suave:      #fde7ef;  /* fundo do botão "+" da linha */
+  --magenta-sombra:     rgba(201, 58, 110, .35); /* sombra do botão flutuante */
+
+  /* Texto */
+  --texto:              #231b20;  /* texto principal da tela */
+  --texto-forte:        #3d3238;  /* títulos de seção em caixa alta, chips */
+  --texto-fraco:        #6f646a;  /* subtítulos, legendas, abas inativas */
+  --texto-apagado:      #8a7f85;  /* placeholder da busca, chevron, alça */
+  --texto-vazio:        #b3a8ae;  /* "0,00" no campo de preço vazio */
+
+  /* Superfícies e linhas */
+  --fundo:              #ffffff;
+  --fundo-cinza:        #f4f1f2;  /* trilho do seletor, botão "−", botão fechar */
+  --fundo-linha-aberta: #f6f4f5;  /* linha expandida da lista */
+  --borda:              #e3dde0;  /* campos, chips, botão secundário */
+  --divisoria:          #f0ebed;  /* separador entre linhas, topo da barra de abas */
+  --alca:               #d9d1d5;  /* alça da folha que sobe */
+  --marcador-borda:     #cfc6cb;  /* círculo de "peguei" desmarcado */
+
+  /* Conexão */
+  --online:             #2f9e63;
+  --offline:            #d99a1c;
+  --aviso-fundo:        #fff4dc;  /* faixa de alterações pendentes */
+  --aviso-texto:        #6b4a00;
+
+  /* Variação de preço e estados */
+  --subiu-fundo:        #fdeceb;
+  --subiu:              #b3261e;  /* também: erro, ação destrutiva, orçamento estourado */
+  --desceu-fundo:       #e4f4ea;
+  --desceu:             #1f6b45;  /* também: saldo restante positivo, ✓ do carrinho */
+  --barra-ok:           #1f8a55;  /* barra do orçamento dentro do limite */
+  --neutro-fundo:       #f4f1f2;
+  --neutro:             #6f646a;
+  --outra-marca-fundo:  #e9e4e7;
+  --outra-marca:        #4d4348;
+
+  /* Avatares do casal (Compartilhamento) */
+  --avatar-1-fundo:     #fde7ef;
+  --avatar-1:           #a82d58;
+  --avatar-2-fundo:     #e6e8fb;
+  --avatar-2:           #3f48a8;
+
+  /* Camadas */
+  --veu:                rgba(35, 27, 32, .45);
+  --sombra-dialogo:     0 20px 50px rgba(35, 27, 32, .3);
+  --sombra-folha:       0 -8px 30px rgba(35, 27, 32, .2);
+  --sombra-arrastando:  0 8px 22px rgba(40, 25, 35, .2);
+  --sombra-flutuante:   0 6px 16px var(--magenta-sombra);
+
+  /* Raios */
+  --raio-pilula:        99px;
+  --raio-folha:         28px;
+  --raio-dialogo:       24px;
+  --raio-cartao-acao:   16px;
+  --raio-botao:         14px;  /* botões de 50px, cartões de resumo, linha aberta */
+  --raio-pequeno:       12px;  /* campo de limite, cartões do detalhe, faixa offline */
+
+  /* Medidas */
+  --margem:             18px;  /* respiro lateral de todas as telas */
+  --toque:              44px;  /* alvo mínimo de toque */
+  --altura-botao:       50px;
+  --altura-campo:       48px;
+  --altura-abas:        76px;
+  --altura-segmento:    40px;
+  --altura-chip:        38px;
+
+  /* Tipografia */
+  --fonte: "Figtree", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+/* --------------------------------------------------------------------------
+   Base
+   -------------------------------------------------------------------------- */
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--fundo);
+  color: var(--texto);
+  font-family: var(--fonte);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+[hidden], .oculto { display: none !important; }
+
+/* A coluna do app tem a largura de um celular mesmo no computador: o design foi
+   desenhado em 390px e não tem versão larga. */
+.app {
+  max-width: 480px;
+  min-height: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  background: var(--fundo);
+}
+
+/* Cabeçalho + seletor + busca presos no topo; a lista rola por baixo. */
+.topo-fixo {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: var(--fundo);
+}
+
+/* --------------------------------------------------------------------------
+   Cabeçalho da tela
+   -------------------------------------------------------------------------- */
+.cabecalho {
+  flex: none;
+  padding: calc(env(safe-area-inset-top, 0px) + 6px) var(--margem) 10px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.cabecalho__titulo {
+  margin: 0;
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -.5px;
+  line-height: 1.15;
+}
+.cabecalho__sub {
+  font-size: 12.5px;
+  color: var(--texto-fraco);
+  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.cabecalho__direita { text-align: right; }
+.cabecalho__valor {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -.4px;
+  line-height: 1.15;
+}
+
+.ponto {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: none;
+  background: var(--offline);
+}
+.ponto--online { background: var(--online); }
+
+/* --------------------------------------------------------------------------
+   Conteúdo rolável
+   -------------------------------------------------------------------------- */
+.tela {
+  flex: 1;
+  padding: 0 var(--margem) calc(var(--altura-abas) + env(safe-area-inset-bottom, 0px) + 12px);
+  border-top: 1px solid var(--divisoria);
+}
+.tela:focus { outline: none; }
+
+/* Título de seção em caixa alta ("LATICÍNIOS", "RESUMO DA COMPRA"). */
+.secao {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin: 18px 0 4px;
+}
+.secao__titulo {
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: .8px;
+  text-transform: uppercase;
+  color: var(--texto-forte);
+}
+.secao__conta { font-size: 12.5px; color: var(--texto-fraco); }
+/* As margens de cada título de seção, como em cada tela do design. */
+.secao--bloco { margin: 18px 0 6px; }       /* Orçamento: "Limite de gastos" */
+.secao--resumo { margin: 22px 0 8px; }      /* Orçamento: "Resumo da compra", "Observações" */
+.secao--ajustes { margin: 24px 0 2px; }     /* Ajustes: "Cadastros", "Durante a compra" */
+.secao--primeira { margin-top: 18px; }      /* Ajustes: "Compartilhamento" */
+
+/* Selo em pílula (variação de preço, "Nota fiscal"). */
+.selo {
+  display: inline-block;
+  margin-top: 3px;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: var(--raio-pilula);
+}
+.selo--neutro { background: var(--neutro-fundo); color: var(--neutro); }
+.selo--subiu { background: var(--subiu-fundo); color: var(--subiu); }
+.selo--desceu { background: var(--desceu-fundo); color: var(--desceu); }
+
+/* --------------------------------------------------------------------------
+   Lista: seletor, busca e linhas
+   -------------------------------------------------------------------------- */
+.topo-lista { flex: none; }
+
+.segmento {
+  margin: 4px var(--margem) 0;
+  display: flex;
+  background: var(--fundo-cinza);
+  border-radius: var(--raio-pilula);
+  padding: 4px;
+  gap: 2px;
+}
+.segmento__opcao {
+  flex: 1;
+  height: var(--altura-segmento);
+  border: 0;
+  border-radius: var(--raio-pilula);
+  background: transparent;
+  color: var(--texto-fraco);
+  font-weight: 700;
+  font-size: 13.5px;
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.segmento__opcao[aria-pressed="true"] { background: var(--magenta); color: #fff; }
+
+.busca {
+  padding: 8px var(--margem) 0;
+}
+.busca__caixa {
+  height: 44px;
+  border-bottom: 1.5px solid var(--borda);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--texto-apagado);
+}
+.busca__caixa:focus-within { border-bottom-color: var(--magenta); color: var(--texto); }
+.busca__caixa svg { flex: none; }
+.busca__entrada {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  border: 0;
+  background: transparent;
+  font-size: 16px;
+  color: var(--texto);
+  outline: none;
+}
+.busca__entrada::placeholder { color: var(--texto-apagado); }
+.busca__entrada::-webkit-search-cancel-button { display: none; }
+.busca__limpar {
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--fundo-cinza);
+  color: var(--texto);
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+/* Atalhos por corredor (5a). Sem chips, a lista desce 10px, como no 6a. */
+.chips {
+  display: flex;
+  gap: 8px;
+  padding: 12px var(--margem) 10px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.chips:empty { display: none; }
+.chips::-webkit-scrollbar { display: none; }
+.chip {
+  flex: none;
+  height: var(--altura-chip);
+  padding: 0 15px;
+  border-radius: var(--raio-pilula);
+  border: 1px solid var(--borda);
+  background: #fff;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--texto-forte);
+  white-space: nowrap;
+  display: flex;
+  align-items: center;
+}
+.tela--lista { margin-top: 10px; }
+.secao--carrinho { margin-top: 22px; }
+
+.cabecalho__prog { font-size: 12.5px; color: var(--texto-fraco); margin-top: 2px; }
+
+.linha {
+  border-bottom: 1px solid var(--divisoria);
+  padding: 8px 10px;
+  margin: 0 -10px;
+}
+.linha__corpo {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 48px;
+}
+.linha__marcador {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid var(--marcador-borda);
+  background: #fff;
+  flex: none;
+}
+.linha__texto { flex: 1; min-width: 0; }
+.linha--zerada .linha__marcador,
+.linha--zerada .linha__texto { opacity: .45; }
+.linha__nome {
+  font-size: 16px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.linha__sub { font-size: 12.5px; color: var(--texto-fraco); margin-top: 1px; }
+
+/* "No carrinho": ✓ verde, nome apagado. */
+.carrinho {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 56px;
+  border-bottom: 1px solid var(--divisoria);
+}
+.carrinho__check {
+  width: 26px;
+  height: 26px;
+  margin: 0 3px;
+  border-radius: 50%;
+  background: var(--desceu-fundo);
+  color: var(--desceu);
+  font-size: 14px;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+.carrinho__texto { flex: 1; min-width: 0; }
+.carrinho__nome {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--texto-fraco);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.carrinho__sub { font-size: 12.5px; color: var(--texto-apagado); }
+.carrinho__total { font-size: 15px; font-weight: 700; text-align: right; }
+
+/* --------------------------------------------------------------------------
+   Estados vazios (6a "Nenhum item para levar", 6b "Nenhum produto encontrado")
+   -------------------------------------------------------------------------- */
+.vazio { padding: 80px 12px 0; text-align: center; }
+.vazio__titulo { font-size: 19px; font-weight: 800; }
+.vazio__texto {
+  font-size: 14.5px;
+  color: var(--texto-fraco);
+  margin-top: 6px;
+  line-height: 1.45;
+}
+.vazio .botao { margin-top: 24px; }
+.vazio .botao + .botao { margin-top: 10px; }
+
+.sem-resultado { padding: 36px 0 0; }
+.sem-resultado__titulo { font-size: 16px; font-weight: 800; }
+.sem-resultado__texto { font-size: 14px; color: var(--texto-fraco); margin-top: 4px; }
+
+/* --------------------------------------------------------------------------
+   Botões e campos
+   -------------------------------------------------------------------------- */
+.botao {
+  width: 100%;
+  height: var(--altura-botao);
+  border-radius: var(--raio-botao);
+  border: 1.5px solid var(--magenta);
+  background: var(--magenta);
+  color: #fff;
+  font-weight: 700;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.botao--secundario { background: #fff; color: var(--texto); border-color: var(--borda); }
+.botao:disabled { opacity: .6; cursor: default; }
+
+.campo { display: block; margin-top: 14px; }
+.campo__rotulo {
+  display: block;
+  font-size: 12.5px;
+  color: var(--texto-fraco);
+  margin-bottom: 6px;
+}
+.campo__entrada {
+  width: 100%;
+  height: var(--altura-campo);
+  border: 1.5px solid var(--borda);
+  border-radius: var(--raio-botao);
+  padding: 0 14px;
+  font-size: 16px;
+  background: #fff;
+  outline: none;
+}
+.campo__entrada:focus { border-color: var(--magenta); }
+.campo__entrada::placeholder { color: var(--texto-apagado); }
+
+/* Faixa de erro: mesmas cores e raio do aviso "Orçamento estourado". */
+.alerta {
+  margin-top: 14px;
+  background: var(--subiu-fundo);
+  color: var(--subiu);
+  border-radius: var(--raio-botao);
+  padding: 12px 14px;
+}
+.alerta__titulo { font-weight: 800; font-size: 15.5px; }
+.alerta__texto { font-size: 13.5px; margin-top: 2px; }
+
+/* --------------------------------------------------------------------------
+   Orçamento
+   -------------------------------------------------------------------------- */
+.par {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 56px;
+}
+.par__rotulo { font-size: 16px; }
+.caixa-valor {
+  width: 130px;
+  height: var(--altura-campo);
+  border: 1.5px solid var(--borda);
+  border-radius: var(--raio-pequeno);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 12px;
+}
+.caixa-valor__moeda { font-size: 13px; font-weight: 600; color: var(--texto-fraco); }
+.caixa-valor__numero { font-size: 18px; font-weight: 700; }
+.caixa-valor__numero--vazio { color: var(--texto-vazio); }
+
+.progresso { margin-top: 6px; }
+.progresso__linha {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 8px;
+}
+.progresso__gasto { font-size: 16px; font-weight: 700; }
+.progresso__de { font-weight: 500; font-size: 13px; color: var(--texto-fraco); }
+.progresso__pct { font-weight: 800; }
+.progresso__trilho {
+  height: 10px;
+  border-radius: var(--raio-pilula);
+  background: var(--divisoria);
+  overflow: hidden;
+}
+.progresso__barra { height: 100%; border-radius: var(--raio-pilula); }
+.nota { font-size: 12.5px; color: var(--texto-fraco); margin: 2px 0 0; }
+.nota--abaixo { margin-top: 8px; }
+
+.grade-resumo { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.resumo {
+  border: 1px solid var(--divisoria);
+  border-radius: var(--raio-botao);
+  padding: 12px 14px;
+}
+.resumo__rotulo { font-size: 12.5px; color: var(--texto-fraco); }
+.resumo__valor { font-size: 20px; font-weight: 800; margin-top: 2px; }
+
+.observacao {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 64px;
+  border-bottom: 1px solid var(--divisoria);
+  font-size: 15px;
+}
+
+/* --------------------------------------------------------------------------
+   Histórico
+   -------------------------------------------------------------------------- */
+.compra {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 76px;
+  border-bottom: 1px solid var(--divisoria);
+}
+.compra__texto { flex: 1; }
+.compra__data { font-size: 17px; font-weight: 700; }
+.compra__itens { font-size: 13px; color: var(--texto-fraco); margin-top: 2px; }
+.compra__lado { text-align: right; }
+.compra__total { font-size: 17px; font-weight: 800; }
+
+/* --------------------------------------------------------------------------
+   Ajustes
+   -------------------------------------------------------------------------- */
+.pessoa {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 66px;
+  border-bottom: 1px solid var(--divisoria);
+}
+.avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  background: var(--avatar-1-fundo);
+  color: var(--avatar-1);
+}
+.avatar--2 { background: var(--avatar-2-fundo); color: var(--avatar-2); }
+.pessoa__texto { flex: 1; }
+.pessoa__nome { font-weight: 600; }
+.pessoa__sub { font-size: 12.5px; color: var(--texto-fraco); }
+
+.cadastro {
+  display: flex;
+  align-items: center;
+  min-height: 60px;
+  border-bottom: 1px solid var(--divisoria);
+}
+.cadastro__nome { flex: 1; font-weight: 600; font-size: 16px; }
+.cadastro__conta { color: var(--texto-fraco); font-size: 14px; }
+
+.opcao {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 72px;
+}
+.opcao__texto { flex: 1; }
+.opcao__nome { font-weight: 600; font-size: 16px; }
+.opcao__sub { font-size: 12.5px; color: var(--texto-fraco); margin-top: 2px; }
+
+.chave {
+  position: relative;
+  width: 52px;
+  height: 30px;
+  flex: none;
+  border: 0;
+  padding: 0;
+  border-radius: var(--raio-pilula);
+  background: var(--borda);
+}
+.chave::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #fff;
+  transition: left .15s;
+}
+.chave[aria-checked="true"] { background: var(--magenta); }
+.chave[aria-checked="true"]::after { left: 25px; }
+.chave:disabled { opacity: .6; cursor: default; }
+
+.sair { margin-top: 24px; }
+
+/* --------------------------------------------------------------------------
+   Barra de abas
+   -------------------------------------------------------------------------- */
+.abas {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-width: 480px;
+  margin: 0 auto;
+  height: calc(var(--altura-abas) + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  background: #fff;
+  border-top: 1px solid var(--divisoria);
+  display: flex;
+  justify-content: space-around;
+  align-items: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--texto-fraco);
+  z-index: 10;
+}
+.abas__item {
+  width: 80px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  color: inherit;
+  text-decoration: none;
+}
+.abas__item[aria-current="page"] { color: var(--magenta); }
+.abas__item svg { width: 24px; height: 24px; }
+
+/* --------------------------------------------------------------------------
+   Telas cheias: carregando, login, bloqueio, erro
+   -------------------------------------------------------------------------- */
+.cheia {
+  min-height: 100%;
+  padding: calc(env(safe-area-inset-top, 0px) + 56px) var(--margem) 32px;
+  display: flex;
+  flex-direction: column;
+}
+.cheia__marca {
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+  display: block;
+}
+.cheia__titulo {
+  margin: 20px 0 0;
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -.5px;
+  line-height: 1.15;
+}
+.cheia__texto {
+  font-size: 14.5px;
+  color: var(--texto-fraco);
+  margin-top: 6px;
+  line-height: 1.45;
+}
+.cheia__acoes { margin-top: 24px; }
+.cheia__acoes .botao + .botao { margin-top: 10px; }
+
+.girando {
+  width: 28px;
+  height: 28px;
+  margin: 80px auto 0;
+  border-radius: 50%;
+  border: 3px solid var(--divisoria);
+  border-top-color: var(--magenta);
+  animation: girar .8s linear infinite;
+}
+@keyframes girar { to { transform: rotate(360deg); } }

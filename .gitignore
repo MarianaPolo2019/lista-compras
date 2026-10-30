@@ -1,0 +1,25 @@
+# O que NÃO entra no histórico, e por quê
+#
+# Regra de bolso (a mesma do Nosso Plano): entra o que descreve ou constrói o
+# sistema (site, prompts das tarefas, documentação). Fica fora o material de
+# origem pesado, o que é pessoal e o que é da máquina.
+
+# --- material de origem ------------------------------------------------------
+# Exportações do Claude Design (ZIP e pastas extraídas): são a FONTE de onde o
+# desenho saiu. Mudam por inteiro a cada exportação e o git não sabe diffar.
+/design/
+
+# Listas de produtos e notas fiscais do casal em .docx: dado pessoal e
+# material de origem da carga inicial, que foi feita direto no banco.
+/docs/
+
+# O app antigo do Netlify, guardado só como referência do que está sendo substituído.
+/old/
+
+# --- configuração da máquina, não do projeto --------------------------------
+/.claude/
+
+# --- lixo de sistema de arquivos --------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
